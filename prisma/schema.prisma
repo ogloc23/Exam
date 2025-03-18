@@ -1,0 +1,37 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Subject {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique // Unique constraint on name
+  examType    String   // Differentiates subjects by exam type (e.g., 'jamb', 'waec')
+  scores      Score[]
+}
+
+model Score {
+  id          Int      @id @default(autoincrement())
+  examType    String
+  examSubject String
+  subjectId   Int
+  examYear    String
+  score       Int
+  date        DateTime @default(now())
+  subject     Subject  @relation(fields: [subjectId], references: [id])
+}
+
+model Question {
+  id          String   @id // Using API's ID with year prefix as the primary key
+  question    String
+  options     String[] // Array of options
+  answer      String
+  examType    String
+  examSubject String
+  examYear    String
+  @@unique([examYear, id]) // Unique per year only
+}
