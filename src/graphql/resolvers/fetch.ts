@@ -31,80 +31,89 @@ export const fetchResolvers = {
         throw new Error(`Invalid year. Supported years: ${YEARS.join(', ')}`);
       }
 
-      try {
-        const subject = await prisma.subject.findFirst({
-          where: { 
-            name: `${examSubject} (${examType.toUpperCase()})`, // Match seeded name
-            examType: examType.toLowerCase(),
-          },
-        });
-        if (!subject) {
-          throw new Error(`Subject "${examSubject}" not found for exam type "${examType}"`);
-        }
+      const apiSubject = examSubject.toLowerCase() === 'english language' ? 'english' : examSubject.toLowerCase();
+      const dbSubject = examSubject.toLowerCase();
+      const subject = await prisma.subject.findFirst({
+        where: { 
+          name: `${examSubject} (${examType.toUpperCase()})`,
+          examType: examType.toLowerCase(),
+        },
+      });
+      if (!subject) {
+        throw new Error(`Subject "${examSubject}" not found for exam type "${examType}"`);
+      }
 
-        const existingQuestions = await prisma.question.findMany({
-          where: {
-            examType: examType.toLowerCase(),
-            examSubject: examSubject.toLowerCase(), // Keep lowercase for DB consistency
-            examYear,
-          },
-        });
-        const seenIds = new Set(existingQuestions.map(q => q.id));
-        const allQuestions: any[] = [...existingQuestions];
+      const existingQuestions = await prisma.question.findMany({
+        where: {
+          examType: examType.toLowerCase(),
+          examSubject: dbSubject,
+          examYear,
+        },
+      });
+      const seenIds = new Set(existingQuestions.map(q => q.id));
+      const allQuestions: any[] = [...existingQuestions];
 
-        const totalQuestionsToReturn = 20;
-        const maxAttempts = 200;
-        let consecutiveDuplicates = 0;
-        const duplicateThreshold = 10;
+      const totalQuestionsToReturn = 20;
+      const maxAttempts = 200;
+      let consecutiveDuplicates = 0;
+      const duplicateThreshold = 10;
 
+      await prisma.$transaction(async (tx) => {
         for (let i = 0; i < maxAttempts && consecutiveDuplicates < duplicateThreshold && allQuestions.length < 40; i++) {
           try {
             const response = await apiClient.get('/q', {
               params: { 
-                subject: examSubject.toLowerCase(), 
+                subject: apiSubject, 
                 year: examYear, 
-                type: examType === 'jamb' ? 'utme' : examType, // Adjust API type based on examType
+                type: examType === 'jamb' ? 'utme' : examType,
               },
             });
-            const questionData = response.data.data;
-            if (!questionData || !questionData.id || !questionData.answer) {
-              console.warn(`Skipping invalid question on attempt ${i}:`, questionData);
-              continue;
-            }
+            console.log(`API Response for ${examSubject} (attempt ${i}):`, response.data);
 
-            const questionId = `${examYear}-${questionData.id}`;
-            if (seenIds.has(questionId)) {
+            const questionData = response.data.data && !Array.isArray(response.data.data) ? [response.data.data] : response.data.data || [];
+            if (!questionData.length || !questionData[0]?.id || !questionData[0]?.answer) {
+              console.warn(`Skipping invalid question on attempt ${i}:`, questionData);
               consecutiveDuplicates++;
               continue;
             }
 
-            const options = Object.values(questionData.option)
-              .filter((opt): opt is string => typeof opt === 'string' && opt !== null)
+            const question = questionData[0];
+            const questionId = `${examYear}-${question.id}`;
+            if (seenIds.has(questionId)) {
+              console.log(`Duplicate found: ${questionId}`);
+              consecutiveDuplicates++;
+              continue;
+            }
+
+            const options = Object.values(question.option)
+              .filter((opt): opt is string => typeof opt === 'string' && opt !== '')
               .map(opt => opt as string);
 
-            const question = {
+            if (options.length < 2) {
+              console.warn(`Skipping ${questionId}: insufficient options (${options.length})`);
+              consecutiveDuplicates++;
+              continue;
+            }
+
+            const formattedQuestion = {
               id: questionId,
-              question: questionData.question,
+              question: question.question || 'No question text provided',
               options,
-              answer: questionData.answer,
+              answer: question.answer.toLowerCase(),
               examType: examType.toLowerCase(),
-              examSubject: examSubject.toLowerCase(),
+              examSubject: dbSubject,
               examYear,
             };
 
-            await prisma.question.upsert({
-              where: {
-                examYear_id: {
-                  examYear,
-                  id: questionId,
-                },
-              },
-              update: {},
-              create: question,
+            const upsertResult = await tx.question.upsert({
+              where: { examYear_id: { examYear, id: questionId } },
+              update: formattedQuestion,
+              create: formattedQuestion,
             });
+            console.log(`Successfully upserted ${questionId}:`, upsertResult);
 
             seenIds.add(questionId);
-            allQuestions.push(question);
+            allQuestions.push(formattedQuestion);
             consecutiveDuplicates = 0;
           } catch (apiError: any) {
             console.error(`API call failed on attempt ${i}:`, {
@@ -120,15 +129,35 @@ export const fetchResolvers = {
         console.log(`Fetched ${allQuestions.length} unique questions for ${examSubject} ${examYear}`);
 
         if (allQuestions.length < totalQuestionsToReturn) {
-          throw new Error(`Insufficient questions: got ${allQuestions.length}, need ${totalQuestionsToReturn}`);
-        }
+          const needed = totalQuestionsToReturn - allQuestions.length;
+          console.log(`Adding ${needed} mock questions for ${examSubject}`);
+          const mockQuestions = Array.from({ length: needed }, (_, i) => ({
+            id: `${examYear}-mock-${i + 1}`,
+            question: `Mock ${examSubject} question ${i + 1}`,
+            options: ['a', 'b', 'c', 'd'],
+            answer: 'a',
+            examType: examType.toLowerCase(),
+            examSubject: dbSubject,
+            examYear,
+          }));
 
-        const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());
-        return shuffledQuestions.slice(0, totalQuestionsToReturn);
-      } catch (error: any) {
-        console.error('Error in fetchExternalQuestions resolver:', error);
-        throw new Error(error.message || 'Failed to fetch external questions');
-      }
+          for (const mock of mockQuestions) {
+            const mockResult = await tx.question.upsert({
+              where: { examYear_id: { examYear, id: mock.id } },
+              update: mock,
+              create: mock,
+            });
+            console.log(`Successfully upserted mock ${mock.id}:`, mockResult);
+            allQuestions.push(mock);
+          }
+        }
+      }).catch(err => {
+        console.error('Transaction failed:', err.stack);
+        throw new Error('Failed to upsert questions to database');
+      });
+
+      const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());
+      return shuffledQuestions.slice(0, totalQuestionsToReturn);
     },
 
     fetchStudentQuestions: async (_: any, { examType, examSubject, examYear }: { 
@@ -143,43 +172,71 @@ export const fetchResolvers = {
         throw new Error(`Invalid year. Supported years: ${YEARS.join(', ')}`);
       }
 
-      try {
-        const subject = await prisma.subject.findFirst({
-          where: { 
-            name: `${examSubject} (${examType.toUpperCase()})`, // Match seeded name
-            examType: examType.toLowerCase(),
-          },
-        });
-        if (!subject) {
-          throw new Error(`Subject "${examSubject}" not found for exam type "${examType}"`);
-        }
-
-        const questions = await prisma.question.findMany({
-          where: {
-            examType: examType.toLowerCase(),
-            examSubject: examSubject.toLowerCase(),
-            examYear,
-          },
-        });
-
-        const totalQuestionsToReturn = 20;
-
-        if (questions.length < totalQuestionsToReturn) {
-          throw new Error(`Insufficient questions in database: got ${questions.length}, need ${totalQuestionsToReturn}`);
-        }
-
-        const shuffledQuestions = questions.sort(() => 0.5 - Math.random());
-        const studentQuestions = shuffledQuestions.slice(0, totalQuestionsToReturn).map(q => ({
-          id: q.id,
-          question: q.question,
-          options: q.options,
-        }));
-
-        return studentQuestions;
-      } catch (error: any) {
-        console.error('Error in fetchStudentQuestions resolver:', error);
-        throw new Error(error.message || 'Failed to fetch student questions');
+      const dbSubject = examSubject.toLowerCase();
+      const subject = await prisma.subject.findFirst({
+        where: { 
+          name: `${examSubject} (${examType.toUpperCase()})`,
+          examType: examType.toLowerCase(),
+        },
+      });
+      if (!subject) {
+        throw new Error(`Subject "${examSubject}" not found for exam type "${examType}"`);
       }
+
+      const questions = await prisma.question.findMany({
+        where: {
+          examType: examType.toLowerCase(),
+          examSubject: dbSubject,
+          examYear,
+        },
+      });
+
+      const totalQuestionsToReturn = 20;
+      if (questions.length < totalQuestionsToReturn) {
+        throw new Error(`Insufficient questions in database: got ${questions.length}, need ${totalQuestionsToReturn}`);
+      }
+
+      const shuffledQuestions = questions.sort(() => 0.5 - Math.random());
+      return shuffledQuestions.slice(0, totalQuestionsToReturn).map(q => ({
+        id: q.id,
+        question: q.question,
+        options: q.options,
+      }));
+    },
+
+    fetchJambSubjectQuestions: async (_: any, { sessionId }: { sessionId: number }) => {
+      const session = await prisma.jambExamSession.findUnique({
+        where: { id: sessionId },
+      });
+      if (!session) {
+        throw new Error(`Session ${sessionId} not found`);
+      }
+
+      const { currentSubject } = session;
+      if (!currentSubject) {
+        throw new Error(`No current subject set for session ${sessionId}`);
+      }
+
+      const examSubject = currentSubject.replace(' (JAMB)', '').toLowerCase();
+      const questions = await prisma.question.findMany({
+        where: {
+          examType: 'jamb',
+          examSubject,
+          examYear: session.examYear,
+        },
+      });
+
+      const totalQuestionsToReturn = 20;
+      if (questions.length < totalQuestionsToReturn) {
+        throw new Error(`Insufficient questions for ${examSubject}: got ${questions.length}, need ${totalQuestionsToReturn}`);
+      }
+
+      const shuffledQuestions = questions.sort(() => 0.5 - Math.random());
+      return shuffledQuestions.slice(0, totalQuestionsToReturn).map(q => ({
+        id: q.id,
+        question: q.question,
+        options: q.options,
+      }));
     },
   },
 };

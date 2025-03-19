@@ -9,29 +9,42 @@ datasource db {
 
 model Subject {
   id          Int      @id @default(autoincrement())
-  name        String   @unique // Unique constraint on name
-  examType    String   // Differentiates subjects by exam type (e.g., 'jamb', 'waec')
+  name        String   @unique
+  examType    String
   scores      Score[]
 }
 
 model Score {
-  id          Int      @id @default(autoincrement())
-  examType    String
-  examSubject String
-  subjectId   Int
-  examYear    String
-  score       Int
-  date        DateTime @default(now())
-  subject     Subject  @relation(fields: [subjectId], references: [id])
+  id            Int             @id @default(autoincrement())
+  examType      String
+  examSubject   String
+  subjectId     Int
+  examYear      String
+  score         Int
+  date          DateTime        @default(now())
+  subject       Subject         @relation(fields: [subjectId], references: [id])
+  jambSession   JambExamSession? @relation(fields: [jambSessionId], references: [id])
+  jambSessionId Int?
 }
 
 model Question {
-  id          String   @id // Using API's ID with year prefix as the primary key
+  id          String   @id
   question    String
-  options     String[] // Array of options
+  options     String[]
   answer      String
   examType    String
   examSubject String
   examYear    String
-  @@unique([examYear, id]) // Unique per year only
+  @@unique([examYear, id])
+}
+
+model JambExamSession {
+  id             Int      @id @default(autoincrement())
+  subjects       String[] // e.g., ["English Language (JAMB)", ...]
+  currentSubject String?
+  examYear       String
+  startTime      DateTime @default(now())
+  endTime        DateTime?
+  isCompleted    Boolean  @default(false)
+  scores         Score[]
 }
