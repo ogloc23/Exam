@@ -65,7 +65,7 @@ exports.jambResolvers = {
             if (!subjects.every(sub => validSubjects.includes(sub))) {
                 throw new Error('Invalid JAMB subjects selected');
             }
-            return yield prisma.jambExamSession.create({
+            const session = yield prisma.jambExamSession.create({
                 data: {
                     subjects,
                     currentSubject: subjects[0],
@@ -74,6 +74,23 @@ exports.jambResolvers = {
                     isCompleted: false,
                 },
             });
+            const startTime = new Date(session.startTime).getTime();
+            const currentTime = new Date().getTime();
+            const elapsedTime = currentTime - startTime;
+            const remainingTime = JAMB_TIME_LIMIT - elapsedTime;
+            const totalSeconds = Math.floor(remainingTime / 1000);
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            let remainingTimeStr = '';
+            if (hours > 0)
+                remainingTimeStr += `${hours}hr `;
+            if (minutes > 0 || hours > 0)
+                remainingTimeStr += `${minutes}min `;
+            if (seconds > 0 || (hours === 0 && minutes === 0))
+                remainingTimeStr += `${seconds}s`;
+            remainingTimeStr = remainingTimeStr.trim();
+            return Object.assign(Object.assign({}, session), { remainingTime: remainingTimeStr });
         }),
         submitJambAnswer: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { sessionId, answers }) {
             const session = yield prisma.jambExamSession.findUnique({
@@ -88,10 +105,24 @@ exports.jambResolvers = {
             }
             const startTime = new Date(session.startTime).getTime();
             const currentTime = new Date().getTime();
-            if (currentTime - startTime > JAMB_TIME_LIMIT) {
+            const elapsedTime = currentTime - startTime;
+            if (elapsedTime > JAMB_TIME_LIMIT) {
                 yield autoSubmitJambExam(sessionId);
                 throw new Error('Time limit exceeded, exam auto-submitted');
             }
+            const remainingTime = JAMB_TIME_LIMIT - elapsedTime;
+            const totalSeconds = Math.floor(remainingTime / 1000);
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            let remainingTimeStr = '';
+            if (hours > 0)
+                remainingTimeStr += `${hours}hr `;
+            if (minutes > 0 || hours > 0)
+                remainingTimeStr += `${minutes}min `;
+            if (seconds > 0 || (hours === 0 && minutes === 0))
+                remainingTimeStr += `${seconds}s`;
+            remainingTimeStr = remainingTimeStr.trim();
             const formattedSubject = session.currentSubject;
             const examSubject = formattedSubject.replace(' (JAMB)', '').toLowerCase();
             const questions = yield prisma.question.findMany({
@@ -134,7 +165,10 @@ exports.jambResolvers = {
                 where: { id: sessionId },
                 data: { currentSubject: nextSubject },
             });
-            return { success: true };
+            return {
+                success: true,
+                remainingTime: remainingTimeStr,
+            };
         }),
         finishJambExam: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { sessionId }) {
             const session = yield prisma.jambExamSession.findUnique({
@@ -148,21 +182,37 @@ exports.jambResolvers = {
                 throw new Error('JAMB session already completed');
             }
             const startTime = new Date(session.startTime).getTime();
-            const currentTime = new Date().getTime();
-            if (currentTime - startTime > JAMB_TIME_LIMIT) {
+            const currentTime = new Date().getTime(); // Server time
+            const elapsedTime = currentTime - startTime; // Milliseconds
+            if (elapsedTime > JAMB_TIME_LIMIT) {
                 yield autoSubmitJambExam(sessionId);
             }
             const updatedSession = yield prisma.jambExamSession.update({
                 where: { id: sessionId },
-                data: { isCompleted: true, endTime: new Date() },
+                data: { isCompleted: true, endTime: new Date() }, // Server time
                 include: { scores: true },
             });
             const totalScore = updatedSession.scores.reduce((sum, score) => sum + score.score, 0);
+            // Calculate time spent in hours, minutes, seconds
+            const totalSeconds = Math.floor(elapsedTime / 1000);
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            // Format timeSpent string
+            let timeSpent = '';
+            if (hours > 0)
+                timeSpent += `${hours}hr `;
+            if (minutes > 0 || hours > 0)
+                timeSpent += `${minutes}min `; // Show minutes if hours exist
+            if (seconds > 0 || (hours === 0 && minutes === 0))
+                timeSpent += `${seconds}s`; // Always show seconds if no hours/minutes
+            timeSpent = timeSpent.trim(); // Remove trailing space
             return {
                 sessionId,
                 subjectScores: updatedSession.scores,
                 totalScore,
                 isCompleted: updatedSession.isCompleted,
+                timeSpent,
             };
         }),
     },
@@ -170,12 +220,25 @@ exports.jambResolvers = {
     JambExamSession: {
         remainingTime: (parent) => {
             if (parent.isCompleted)
-                return 0; // No time left if completed
+                return "0s";
             const startTime = new Date(parent.startTime).getTime();
             const currentTime = new Date().getTime();
             const elapsed = currentTime - startTime;
             const remaining = JAMB_TIME_LIMIT - elapsed;
-            return remaining > 0 ? Math.floor(remaining / 1000) : 0; // Seconds remaining
+            const totalSeconds = Math.floor(remaining / 1000);
+            if (totalSeconds <= 0)
+                return "0s";
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            let remainingTimeStr = '';
+            if (hours > 0)
+                remainingTimeStr += `${hours}hr `;
+            if (minutes > 0 || hours > 0)
+                remainingTimeStr += `${minutes}min `;
+            if (seconds > 0 || (hours === 0 && minutes === 0))
+                remainingTimeStr += `${seconds}s`;
+            return remainingTimeStr.trim();
         },
     },
 };
