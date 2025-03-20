@@ -33,10 +33,9 @@ export const fetchResolvers = {
       const dbSubject = examSubject.toLowerCase();
       const apiSubject = dbSubject === 'english language' ? 'english' : dbSubject;
 
-      // Check Subject table with plain name and examType
       const subject = await prisma.subject.findFirst({
         where: { 
-          name: examSubject, // Use input as-is (case-sensitive match to seed)
+          name: examSubject,
           examType: examType.toLowerCase(),
         },
       });
@@ -59,105 +58,116 @@ export const fetchResolvers = {
       let consecutiveDuplicates = 0;
       const duplicateThreshold = 10;
 
-      await prisma.$transaction(async (tx) => {
-        for (let i = 0; i < maxAttempts && consecutiveDuplicates < duplicateThreshold && allQuestions.length < 40; i++) {
-          try {
-            const response = await apiClient.get('/q', {
-              params: { 
-                subject: apiSubject, 
-                year: examYear, 
-                type: examType === 'jamb' ? 'utme' : examType,
-              },
-            });
-            console.log(`API Response for ${examSubject} (attempt ${i}):`, response.data);
+      try {
+        await prisma.$transaction(async (tx) => {
+          for (let i = 0; i < maxAttempts && consecutiveDuplicates < duplicateThreshold && allQuestions.length < 40; i++) {
+            try {
+              const response = await apiClient.get('/q', {
+                params: { 
+                  subject: apiSubject, 
+                  year: examYear, 
+                  type: examType === 'jamb' ? 'utme' : examType,
+                },
+              });
+              console.log(`API Response for ${examSubject} (attempt ${i}):`, response.data);
 
-            const questionData = response.data.data && !Array.isArray(response.data.data) 
-              ? [response.data.data] 
-              : response.data.data || [];
-            if (!questionData.length || !questionData[0]?.id || !questionData[0]?.answer) {
-              console.warn(`Skipping invalid question on attempt ${i}:`, questionData);
+              const questionData = response.data.data && !Array.isArray(response.data.data) 
+                ? [response.data.data] 
+                : response.data.data || [];
+              if (!questionData.length || !questionData[0]?.id || !questionData[0]?.answer) {
+                console.warn(`Skipping invalid question on attempt ${i}:`, questionData);
+                consecutiveDuplicates++;
+                continue;
+              }
+
+              const question = questionData[0];
+              const questionId = `${examYear}-${question.id}`;
+              if (seenIds.has(questionId)) {
+                console.log(`Duplicate found: ${questionId}`);
+                consecutiveDuplicates++;
+                continue;
+              }
+
+              const options = Object.values(question.option || {})
+                .filter((opt): opt is string => typeof opt === 'string' && opt !== '')
+                .map(opt => opt as string);
+
+              if (options.length < 2) {
+                console.warn(`Skipping ${questionId}: insufficient options (${options.length})`);
+                consecutiveDuplicates++;
+                continue;
+              }
+
+              const formattedQuestion = {
+                id: questionId,
+                question: question.question || 'No question text provided',
+                options,
+                answer: question.answer.toLowerCase(),
+                examType: examType.toLowerCase(),
+                examSubject: dbSubject,
+                examYear,
+              };
+
+              try {
+                const upsertResult = await tx.question.upsert({
+                  where: { examYear_id: { examYear, id: questionId } },
+                  update: formattedQuestion,
+                  create: formattedQuestion,
+                });
+                console.log(`Successfully upserted ${questionId}:`, upsertResult);
+                seenIds.add(questionId);
+                allQuestions.push(formattedQuestion);
+                consecutiveDuplicates = 0;
+              } catch (upsertError) {
+                console.error(`Upsert failed for ${questionId}:`, upsertError);
+                throw upsertError; // Re-throw to rollback transaction
+              }
+            } catch (apiError: any) {
+              console.error(`API call failed on attempt ${i}:`, {
+                message: apiError.message,
+                response: apiError.response?.data,
+                status: apiError.response?.status,
+              });
               consecutiveDuplicates++;
               continue;
             }
+          }
 
-            const question = questionData[0];
-            const questionId = `${examYear}-${question.id}`;
-            if (seenIds.has(questionId)) {
-              console.log(`Duplicate found: ${questionId}`);
-              consecutiveDuplicates++;
-              continue;
-            }
+          console.log(`Fetched ${allQuestions.length} unique questions for ${examSubject} ${examYear}`);
 
-            const options = Object.values(question.option)
-              .filter((opt): opt is string => typeof opt === 'string' && opt !== '')
-              .map(opt => opt as string);
-
-            if (options.length < 2) {
-              console.warn(`Skipping ${questionId}: insufficient options (${options.length})`);
-              consecutiveDuplicates++;
-              continue;
-            }
-
-            const formattedQuestion = {
-              id: questionId,
-              question: question.question || 'No question text provided',
-              options,
-              answer: question.answer.toLowerCase(),
+          if (allQuestions.length < totalQuestionsToReturn) {
+            const needed = totalQuestionsToReturn - allQuestions.length;
+            console.log(`Adding ${needed} mock questions for ${examSubject}`);
+            const mockQuestions = Array.from({ length: needed }, (_, i) => ({
+              id: `${examYear}-mock-${i + 1}`,
+              question: `Mock ${examSubject} question ${i + 1}`,
+              options: ['a', 'b', 'c', 'd'],
+              answer: 'a',
               examType: examType.toLowerCase(),
               examSubject: dbSubject,
               examYear,
-            };
+            }));
 
-            const upsertResult = await tx.question.upsert({
-              where: { examYear_id: { examYear, id: questionId } },
-              update: formattedQuestion,
-              create: formattedQuestion,
-            });
-            console.log(`Successfully upserted ${questionId}:`, upsertResult);
-
-            seenIds.add(questionId);
-            allQuestions.push(formattedQuestion);
-            consecutiveDuplicates = 0;
-          } catch (apiError: any) {
-            console.error(`API call failed on attempt ${i}:`, {
-              message: apiError.message,
-              response: apiError.response?.data,
-              status: apiError.response?.status,
-            });
-            consecutiveDuplicates++;
-            continue;
+            for (const mock of mockQuestions) {
+              try {
+                const mockResult = await tx.question.upsert({
+                  where: { examYear_id: { examYear, id: mock.id } },
+                  update: mock,
+                  create: mock,
+                });
+                console.log(`Successfully upserted mock ${mock.id}:`, mockResult);
+                allQuestions.push(mock);
+              } catch (mockError) {
+                console.error(`Upsert failed for mock ${mock.id}:`, mockError);
+                throw mockError;
+              }
+            }
           }
-        }
-
-        console.log(`Fetched ${allQuestions.length} unique questions for ${examSubject} ${examYear}`);
-
-        if (allQuestions.length < totalQuestionsToReturn) {
-          const needed = totalQuestionsToReturn - allQuestions.length;
-          console.log(`Adding ${needed} mock questions for ${examSubject}`);
-          const mockQuestions = Array.from({ length: needed }, (_, i) => ({
-            id: `${examYear}-mock-${i + 1}`,
-            question: `Mock ${examSubject} question ${i + 1}`,
-            options: ['a', 'b', 'c', 'd'],
-            answer: 'a',
-            examType: examType.toLowerCase(),
-            examSubject: dbSubject,
-            examYear,
-          }));
-
-          for (const mock of mockQuestions) {
-            const mockResult = await tx.question.upsert({
-              where: { examYear_id: { examYear, id: mock.id } },
-              update: mock,
-              create: mock,
-            });
-            console.log(`Successfully upserted mock ${mock.id}:`, mockResult);
-            allQuestions.push(mock);
-          }
-        }
-      }).catch(err => {
-        console.error('Transaction failed:', err.stack);
+        });
+      } catch (transactionError) {
+        console.error('Transaction failed:', transactionError);
         throw new Error('Failed to upsert questions to database');
-      });
+      }
 
       const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());
       return shuffledQuestions.slice(0, totalQuestionsToReturn);

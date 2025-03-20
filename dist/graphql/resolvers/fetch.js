@@ -40,10 +40,9 @@ exports.fetchResolvers = {
             }
             const dbSubject = examSubject.toLowerCase();
             const apiSubject = dbSubject === 'english language' ? 'english' : dbSubject;
-            // Check Subject table with plain name and examType
             const subject = yield prisma.subject.findFirst({
                 where: {
-                    name: examSubject, // Use input as-is (case-sensitive match to seed)
+                    name: examSubject,
                     examType: examType.toLowerCase(),
                 },
             });
@@ -63,97 +62,112 @@ exports.fetchResolvers = {
             const maxAttempts = 200;
             let consecutiveDuplicates = 0;
             const duplicateThreshold = 10;
-            yield prisma.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-                var _a, _b, _c, _d;
-                for (let i = 0; i < maxAttempts && consecutiveDuplicates < duplicateThreshold && allQuestions.length < 40; i++) {
-                    try {
-                        const response = yield apiClient.get('/q', {
-                            params: {
-                                subject: apiSubject,
-                                year: examYear,
-                                type: examType === 'jamb' ? 'utme' : examType,
-                            },
-                        });
-                        console.log(`API Response for ${examSubject} (attempt ${i}):`, response.data);
-                        const questionData = response.data.data && !Array.isArray(response.data.data)
-                            ? [response.data.data]
-                            : response.data.data || [];
-                        if (!questionData.length || !((_a = questionData[0]) === null || _a === void 0 ? void 0 : _a.id) || !((_b = questionData[0]) === null || _b === void 0 ? void 0 : _b.answer)) {
-                            console.warn(`Skipping invalid question on attempt ${i}:`, questionData);
+            try {
+                yield prisma.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
+                    var _a, _b, _c, _d;
+                    for (let i = 0; i < maxAttempts && consecutiveDuplicates < duplicateThreshold && allQuestions.length < 40; i++) {
+                        try {
+                            const response = yield apiClient.get('/q', {
+                                params: {
+                                    subject: apiSubject,
+                                    year: examYear,
+                                    type: examType === 'jamb' ? 'utme' : examType,
+                                },
+                            });
+                            console.log(`API Response for ${examSubject} (attempt ${i}):`, response.data);
+                            const questionData = response.data.data && !Array.isArray(response.data.data)
+                                ? [response.data.data]
+                                : response.data.data || [];
+                            if (!questionData.length || !((_a = questionData[0]) === null || _a === void 0 ? void 0 : _a.id) || !((_b = questionData[0]) === null || _b === void 0 ? void 0 : _b.answer)) {
+                                console.warn(`Skipping invalid question on attempt ${i}:`, questionData);
+                                consecutiveDuplicates++;
+                                continue;
+                            }
+                            const question = questionData[0];
+                            const questionId = `${examYear}-${question.id}`;
+                            if (seenIds.has(questionId)) {
+                                console.log(`Duplicate found: ${questionId}`);
+                                consecutiveDuplicates++;
+                                continue;
+                            }
+                            const options = Object.values(question.option || {})
+                                .filter((opt) => typeof opt === 'string' && opt !== '')
+                                .map(opt => opt);
+                            if (options.length < 2) {
+                                console.warn(`Skipping ${questionId}: insufficient options (${options.length})`);
+                                consecutiveDuplicates++;
+                                continue;
+                            }
+                            const formattedQuestion = {
+                                id: questionId,
+                                question: question.question || 'No question text provided',
+                                options,
+                                answer: question.answer.toLowerCase(),
+                                examType: examType.toLowerCase(),
+                                examSubject: dbSubject,
+                                examYear,
+                            };
+                            try {
+                                const upsertResult = yield tx.question.upsert({
+                                    where: { examYear_id: { examYear, id: questionId } },
+                                    update: formattedQuestion,
+                                    create: formattedQuestion,
+                                });
+                                console.log(`Successfully upserted ${questionId}:`, upsertResult);
+                                seenIds.add(questionId);
+                                allQuestions.push(formattedQuestion);
+                                consecutiveDuplicates = 0;
+                            }
+                            catch (upsertError) {
+                                console.error(`Upsert failed for ${questionId}:`, upsertError);
+                                throw upsertError; // Re-throw to rollback transaction
+                            }
+                        }
+                        catch (apiError) {
+                            console.error(`API call failed on attempt ${i}:`, {
+                                message: apiError.message,
+                                response: (_c = apiError.response) === null || _c === void 0 ? void 0 : _c.data,
+                                status: (_d = apiError.response) === null || _d === void 0 ? void 0 : _d.status,
+                            });
                             consecutiveDuplicates++;
                             continue;
                         }
-                        const question = questionData[0];
-                        const questionId = `${examYear}-${question.id}`;
-                        if (seenIds.has(questionId)) {
-                            console.log(`Duplicate found: ${questionId}`);
-                            consecutiveDuplicates++;
-                            continue;
-                        }
-                        const options = Object.values(question.option)
-                            .filter((opt) => typeof opt === 'string' && opt !== '')
-                            .map(opt => opt);
-                        if (options.length < 2) {
-                            console.warn(`Skipping ${questionId}: insufficient options (${options.length})`);
-                            consecutiveDuplicates++;
-                            continue;
-                        }
-                        const formattedQuestion = {
-                            id: questionId,
-                            question: question.question || 'No question text provided',
-                            options,
-                            answer: question.answer.toLowerCase(),
+                    }
+                    console.log(`Fetched ${allQuestions.length} unique questions for ${examSubject} ${examYear}`);
+                    if (allQuestions.length < totalQuestionsToReturn) {
+                        const needed = totalQuestionsToReturn - allQuestions.length;
+                        console.log(`Adding ${needed} mock questions for ${examSubject}`);
+                        const mockQuestions = Array.from({ length: needed }, (_, i) => ({
+                            id: `${examYear}-mock-${i + 1}`,
+                            question: `Mock ${examSubject} question ${i + 1}`,
+                            options: ['a', 'b', 'c', 'd'],
+                            answer: 'a',
                             examType: examType.toLowerCase(),
                             examSubject: dbSubject,
                             examYear,
-                        };
-                        const upsertResult = yield tx.question.upsert({
-                            where: { examYear_id: { examYear, id: questionId } },
-                            update: formattedQuestion,
-                            create: formattedQuestion,
-                        });
-                        console.log(`Successfully upserted ${questionId}:`, upsertResult);
-                        seenIds.add(questionId);
-                        allQuestions.push(formattedQuestion);
-                        consecutiveDuplicates = 0;
+                        }));
+                        for (const mock of mockQuestions) {
+                            try {
+                                const mockResult = yield tx.question.upsert({
+                                    where: { examYear_id: { examYear, id: mock.id } },
+                                    update: mock,
+                                    create: mock,
+                                });
+                                console.log(`Successfully upserted mock ${mock.id}:`, mockResult);
+                                allQuestions.push(mock);
+                            }
+                            catch (mockError) {
+                                console.error(`Upsert failed for mock ${mock.id}:`, mockError);
+                                throw mockError;
+                            }
+                        }
                     }
-                    catch (apiError) {
-                        console.error(`API call failed on attempt ${i}:`, {
-                            message: apiError.message,
-                            response: (_c = apiError.response) === null || _c === void 0 ? void 0 : _c.data,
-                            status: (_d = apiError.response) === null || _d === void 0 ? void 0 : _d.status,
-                        });
-                        consecutiveDuplicates++;
-                        continue;
-                    }
-                }
-                console.log(`Fetched ${allQuestions.length} unique questions for ${examSubject} ${examYear}`);
-                if (allQuestions.length < totalQuestionsToReturn) {
-                    const needed = totalQuestionsToReturn - allQuestions.length;
-                    console.log(`Adding ${needed} mock questions for ${examSubject}`);
-                    const mockQuestions = Array.from({ length: needed }, (_, i) => ({
-                        id: `${examYear}-mock-${i + 1}`,
-                        question: `Mock ${examSubject} question ${i + 1}`,
-                        options: ['a', 'b', 'c', 'd'],
-                        answer: 'a',
-                        examType: examType.toLowerCase(),
-                        examSubject: dbSubject,
-                        examYear,
-                    }));
-                    for (const mock of mockQuestions) {
-                        const mockResult = yield tx.question.upsert({
-                            where: { examYear_id: { examYear, id: mock.id } },
-                            update: mock,
-                            create: mock,
-                        });
-                        console.log(`Successfully upserted mock ${mock.id}:`, mockResult);
-                        allQuestions.push(mock);
-                    }
-                }
-            })).catch(err => {
-                console.error('Transaction failed:', err.stack);
+                }));
+            }
+            catch (transactionError) {
+                console.error('Transaction failed:', transactionError);
                 throw new Error('Failed to upsert questions to database');
-            });
+            }
             const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());
             return shuffledQuestions.slice(0, totalQuestionsToReturn);
         }),
