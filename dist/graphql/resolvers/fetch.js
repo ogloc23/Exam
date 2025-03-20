@@ -59,13 +59,13 @@ exports.fetchResolvers = {
             const seenIds = new Set(existingQuestions.map(q => q.id));
             const allQuestions = [...existingQuestions];
             const totalQuestionsToReturn = 20;
-            const maxAttempts = 200;
-            let consecutiveDuplicates = 0;
-            const duplicateThreshold = 10;
+            const maxAttempts = 50; // Reduced to avoid timeout
             try {
                 yield prisma.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
                     var _a, _b, _c, _d;
-                    for (let i = 0; i < maxAttempts && consecutiveDuplicates < duplicateThreshold && allQuestions.length < 40; i++) {
+                    let consecutiveDuplicates = 0;
+                    const duplicateThreshold = 10;
+                    for (let i = 0; i < maxAttempts && consecutiveDuplicates < duplicateThreshold && allQuestions.length < totalQuestionsToReturn; i++) {
                         try {
                             const response = yield apiClient.get('/q', {
                                 params: {
@@ -74,7 +74,7 @@ exports.fetchResolvers = {
                                     type: examType === 'jamb' ? 'utme' : examType,
                                 },
                             });
-                            console.log(`API Response for ${examSubject} (attempt ${i}):`, response.data);
+                            console.log(`API Response for ${examSubject} (attempt ${i}):`, JSON.stringify(response.data, null, 2));
                             const questionData = response.data.data && !Array.isArray(response.data.data)
                                 ? [response.data.data]
                                 : response.data.data || [];
@@ -102,26 +102,21 @@ exports.fetchResolvers = {
                                 id: questionId,
                                 question: question.question || 'No question text provided',
                                 options,
-                                answer: question.answer.toLowerCase(),
+                                answer: String(question.answer).toLowerCase(), // Ensure string
                                 examType: examType.toLowerCase(),
                                 examSubject: dbSubject,
                                 examYear,
                             };
-                            try {
-                                const upsertResult = yield tx.question.upsert({
-                                    where: { examYear_id: { examYear, id: questionId } },
-                                    update: formattedQuestion,
-                                    create: formattedQuestion,
-                                });
-                                console.log(`Successfully upserted ${questionId}:`, upsertResult);
-                                seenIds.add(questionId);
-                                allQuestions.push(formattedQuestion);
-                                consecutiveDuplicates = 0;
-                            }
-                            catch (upsertError) {
-                                console.error(`Upsert failed for ${questionId}:`, upsertError);
-                                throw upsertError; // Re-throw to rollback transaction
-                            }
+                            console.log(`Attempting upsert for ${questionId}:`, formattedQuestion);
+                            const upsertResult = yield tx.question.upsert({
+                                where: { examYear_id: { examYear, id: questionId } },
+                                update: formattedQuestion,
+                                create: formattedQuestion,
+                            });
+                            console.log(`Successfully upserted ${questionId}:`, upsertResult);
+                            seenIds.add(questionId);
+                            allQuestions.push(formattedQuestion);
+                            consecutiveDuplicates = 0;
                         }
                         catch (apiError) {
                             console.error(`API call failed on attempt ${i}:`, {
@@ -147,25 +142,20 @@ exports.fetchResolvers = {
                             examYear,
                         }));
                         for (const mock of mockQuestions) {
-                            try {
-                                const mockResult = yield tx.question.upsert({
-                                    where: { examYear_id: { examYear, id: mock.id } },
-                                    update: mock,
-                                    create: mock,
-                                });
-                                console.log(`Successfully upserted mock ${mock.id}:`, mockResult);
-                                allQuestions.push(mock);
-                            }
-                            catch (mockError) {
-                                console.error(`Upsert failed for mock ${mock.id}:`, mockError);
-                                throw mockError;
-                            }
+                            console.log(`Attempting upsert for mock ${mock.id}:`, mock);
+                            const mockResult = yield tx.question.upsert({
+                                where: { examYear_id: { examYear, id: mock.id } },
+                                update: mock,
+                                create: mock,
+                            });
+                            console.log(`Successfully upserted mock ${mock.id}:`, mockResult);
+                            allQuestions.push(mock);
                         }
                     }
-                }));
+                }), { maxWait: 10000, timeout: 20000 }); // Extended timeouts
             }
             catch (transactionError) {
-                console.error('Transaction failed:', transactionError);
+                console.error('Transaction failed with details:', transactionError);
                 throw new Error('Failed to upsert questions to database');
             }
             const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());
