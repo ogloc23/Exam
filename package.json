@@ -2,16 +2,17 @@
   "name": "jamb-exam-endpoint",
   "version": "1.0.0",
   
-    "scripts": {
-      "start": "nodemon src/index.ts",
-      "build": "tsc",
-      "serve": "node dist/index.js",
-      "questions": "npx ts-node checkQuestions.ts",
-      "seed": "npx ts-node src/seed.ts",
-      "prisma:init": "prisma init",
-      "prisma:migrate": "prisma migrate dev --name init",
-      "prisma:generate": "prisma generate"
-    },
+   "scripts": {
+  "start": "nodemon src/index.ts",                   
+  "build": "tsc && npx prisma generate",              
+  "serve": "node dist/index.js",                      
+  "deploy": "npm install && tsc && npx prisma generate && npx prisma db push", 
+  "questions": "npx ts-node checkQuestions.ts",       
+  "seed": "npx ts-node src/seed.ts",                  
+  "prisma:init": "prisma init",                       
+  "prisma:migrate": "prisma migrate dev --name init", 
+  "prisma:generate": "prisma generate"                
+},
   
   "keywords": [],
   "author": "",
