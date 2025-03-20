@@ -179,11 +179,14 @@ export const fetchResolvers = {
       return shuffledQuestions.slice(0, 20);
     },
 
-    fetchStudentQuestions: async (_: any, { examType, examSubject, examYear }: { 
-      examType: string; 
-      examSubject: string; 
-      examYear: string 
-    }) => {
+    fetchStudentQuestions: async (
+      _: any,
+      { examType, examSubject, examYear }: { 
+        examType: string; 
+        examSubject: string; 
+        examYear: string 
+      }
+    ) => {
       if (!EXAM_TYPES.includes(examType.toLowerCase())) {
         throw new Error('Invalid exam type. Supported types: "jamb", "waec", "neco"');
       }
@@ -194,7 +197,7 @@ export const fetchResolvers = {
       const dbSubject = examSubject.toLowerCase();
       const subject = await prisma.subject.findFirst({
         where: { 
-          name: `${examSubject} (${examType.toUpperCase()})`,
+          name: examSubject, // Updated to match plain name
           examType: examType.toLowerCase(),
         },
       });

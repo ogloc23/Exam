@@ -179,7 +179,7 @@ exports.fetchResolvers = {
             const dbSubject = examSubject.toLowerCase();
             const subject = yield prisma.subject.findFirst({
                 where: {
-                    name: `${examSubject} (${examType.toUpperCase()})`,
+                    name: examSubject, // Updated to match plain name
                     examType: examType.toLowerCase(),
                 },
             });
