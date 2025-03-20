@@ -28,12 +28,12 @@ exports.jambTypeDefs = (0, apollo_server_1.gql) `
     endTime: DateTime
     isCompleted: Boolean!
     scores: [Score!]!
-    remainingTime: String  # Seconds remaining, calculated server-side
+    remainingTime: String
   }
 
   type SubmitResponse {
     success: Boolean!
-    remainingTime: String # Seconds remaining, calculated from server-side
+    remainingTime: String
   }
 
   type JambExamResult {
@@ -41,7 +41,7 @@ exports.jambTypeDefs = (0, apollo_server_1.gql) `
     subjectScores: [Score!]!
     totalScore: Int!
     isCompleted: Boolean!
-    timeSpent: String! # Time spent, server-calculated
+    timeSpent: String!
   }
 
   input AnswerInput {
@@ -50,6 +50,7 @@ exports.jambTypeDefs = (0, apollo_server_1.gql) `
   }
 
   type Query {
+    years: [String!]!  # Added this
     fetchJambSubjectQuestions(sessionId: Int!): [Question!]!
   }
 
