@@ -38,11 +38,12 @@ exports.fetchResolvers = {
             if (!YEARS.includes(examYear)) {
                 throw new Error(`Invalid year. Supported years: ${YEARS.join(', ')}`);
             }
-            const apiSubject = examSubject.toLowerCase() === 'english language' ? 'english' : examSubject.toLowerCase();
             const dbSubject = examSubject.toLowerCase();
+            const apiSubject = dbSubject === 'english language' ? 'english' : dbSubject;
+            // Check Subject table with plain name and examType
             const subject = yield prisma.subject.findFirst({
                 where: {
-                    name: `${examSubject} (${examType.toUpperCase()})`,
+                    name: examSubject, // Use input as-is (case-sensitive match to seed)
                     examType: examType.toLowerCase(),
                 },
             });
@@ -74,7 +75,9 @@ exports.fetchResolvers = {
                             },
                         });
                         console.log(`API Response for ${examSubject} (attempt ${i}):`, response.data);
-                        const questionData = response.data.data && !Array.isArray(response.data.data) ? [response.data.data] : response.data.data || [];
+                        const questionData = response.data.data && !Array.isArray(response.data.data)
+                            ? [response.data.data]
+                            : response.data.data || [];
                         if (!questionData.length || !((_a = questionData[0]) === null || _a === void 0 ? void 0 : _a.id) || !((_b = questionData[0]) === null || _b === void 0 ? void 0 : _b.answer)) {
                             console.warn(`Skipping invalid question on attempt ${i}:`, questionData);
                             consecutiveDuplicates++;

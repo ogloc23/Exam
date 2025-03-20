@@ -19,11 +19,10 @@ const apiClient = axios.create({
 
 export const fetchResolvers = {
   Query: {
-    fetchExternalQuestions: async (_: any, { examType, examSubject, examYear }: { 
-      examType: string; 
-      examSubject: string; 
-      examYear: string 
-    }) => {
+    fetchExternalQuestions: async (
+      _: any,
+      { examType, examSubject, examYear }: { examType: string; examSubject: string; examYear: string }
+    ) => {
       if (!EXAM_TYPES.includes(examType.toLowerCase())) {
         throw new Error('Invalid exam type. Supported types: "jamb", "waec", "neco"');
       }
@@ -31,11 +30,13 @@ export const fetchResolvers = {
         throw new Error(`Invalid year. Supported years: ${YEARS.join(', ')}`);
       }
 
-      const apiSubject = examSubject.toLowerCase() === 'english language' ? 'english' : examSubject.toLowerCase();
       const dbSubject = examSubject.toLowerCase();
+      const apiSubject = dbSubject === 'english language' ? 'english' : dbSubject;
+
+      // Check Subject table with plain name and examType
       const subject = await prisma.subject.findFirst({
         where: { 
-          name: `${examSubject} (${examType.toUpperCase()})`,
+          name: examSubject, // Use input as-is (case-sensitive match to seed)
           examType: examType.toLowerCase(),
         },
       });
@@ -70,7 +71,9 @@ export const fetchResolvers = {
             });
             console.log(`API Response for ${examSubject} (attempt ${i}):`, response.data);
 
-            const questionData = response.data.data && !Array.isArray(response.data.data) ? [response.data.data] : response.data.data || [];
+            const questionData = response.data.data && !Array.isArray(response.data.data) 
+              ? [response.data.data] 
+              : response.data.data || [];
             if (!questionData.length || !questionData[0]?.id || !questionData[0]?.answer) {
               console.warn(`Skipping invalid question on attempt ${i}:`, questionData);
               consecutiveDuplicates++;
