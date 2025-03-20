@@ -53,21 +53,21 @@ function seed() {
             // Seed JAMB subjects
             yield Promise.all(JAMB_SUBJECTS.map((name) => prisma.subject.create({
                 data: {
-                    name: `${name} (JAMB)`,
+                    name, // No (JAMB) suffix
                     examType: 'jamb',
                 },
             })));
             // Seed WAEC subjects
             yield Promise.all(WAEC_SUBJECTS.map((name) => prisma.subject.create({
                 data: {
-                    name: `${name} (WAEC)`,
+                    name, // No (WAEC) suffix
                     examType: 'waec',
                 },
             })));
-            // Seed NECO subjects (minimal for now)
+            // Seed NECO subjects
             yield Promise.all(NECO_SUBJECTS.map((name) => prisma.subject.create({
                 data: {
-                    name: `${name} (NECO)`,
+                    name, // No (NECO) suffix
                     examType: 'neco',
                 },
             })));

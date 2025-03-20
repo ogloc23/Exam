@@ -9,7 +9,7 @@ datasource db {
 
 model Subject {
   id          Int      @id @default(autoincrement())
-  name        String   @unique
+  name        String   
   examType    String
   scores      Score[]
 }
