@@ -200,7 +200,7 @@ exports.fetchResolvers = {
             if (!currentSubject) {
                 throw new Error(`No current subject set for session ${sessionId}`);
             }
-            const examSubject = currentSubject.replace(' (JAMB)', '').toLowerCase();
+            const examSubject = currentSubject.toLowerCase(); // No (JAMB) to replace
             const questions = yield prisma.question.findMany({
                 where: {
                     examType: 'jamb',

@@ -211,13 +211,13 @@ export const fetchResolvers = {
       if (!session) {
         throw new Error(`Session ${sessionId} not found`);
       }
-
+    
       const { currentSubject } = session;
       if (!currentSubject) {
         throw new Error(`No current subject set for session ${sessionId}`);
       }
-
-      const examSubject = currentSubject.replace(' (JAMB)', '').toLowerCase();
+    
+      const examSubject = currentSubject.toLowerCase(); // No (JAMB) to replace
       const questions = await prisma.question.findMany({
         where: {
           examType: 'jamb',
@@ -225,12 +225,12 @@ export const fetchResolvers = {
           examYear: session.examYear,
         },
       });
-
+    
       const totalQuestionsToReturn = 20;
       if (questions.length < totalQuestionsToReturn) {
         throw new Error(`Insufficient questions for ${examSubject}: got ${questions.length}, need ${totalQuestionsToReturn}`);
       }
-
+    
       const shuffledQuestions = questions.sort(() => 0.5 - Math.random());
       return shuffledQuestions.slice(0, totalQuestionsToReturn).map(q => ({
         id: q.id,

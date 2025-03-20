@@ -8,6 +8,7 @@ const JAMB_TIME_LIMIT = 5400 * 1000; // 90 minutes in milliseconds
 
 export const jambResolvers = {
   Query: {
+    years: () => YEARS,
     fetchJambSubjectQuestions: async (
       _: any,
       { sessionId }: { sessionId: number }
@@ -22,7 +23,7 @@ export const jambResolvers = {
         throw new Error('No current subject to fetch questions for');
       }
 
-      const examSubject = session.currentSubject.replace(' (JAMB)', '').toLowerCase();
+      const examSubject = session.currentSubject.toLowerCase();
       const questions = await prisma.question.findMany({
         where: {
           examType: 'jamb',
@@ -52,7 +53,7 @@ export const jambResolvers = {
       if (subjects.length !== 4) {
         throw new Error('Exactly 4 subjects must be selected for JAMB exam');
       }
-      if (!subjects.includes('English Language (JAMB)')) {
+      if (!subjects.includes('English Language')) { // Removed (JAMB)
         throw new Error('English Language is compulsory for JAMB');
       }
       if (!YEARS.includes(examYear)) {
@@ -62,14 +63,14 @@ export const jambResolvers = {
       const jambSubjects = await prisma.subject.findMany({
         where: { examType: 'jamb' },
       });
-      const validSubjects = jambSubjects.map(s => s.name);
+      const validSubjects = jambSubjects.map(s => s.name); // e.g., "English Language"
       if (!subjects.every(sub => validSubjects.includes(sub))) {
         throw new Error('Invalid JAMB subjects selected');
       }
     
       const session = await prisma.jambExamSession.create({
         data: {
-          subjects,
+          subjects, // Store plain names
           currentSubject: subjects[0],
           examYear,
           startTime: new Date(),
@@ -137,8 +138,8 @@ export const jambResolvers = {
       if (seconds > 0 || (hours === 0 && minutes === 0)) remainingTimeStr += `${seconds}s`;
       remainingTimeStr = remainingTimeStr.trim();
     
-      const formattedSubject = session.currentSubject;
-      const examSubject = formattedSubject.replace(' (JAMB)', '').toLowerCase();
+      const formattedSubject = session.currentSubject; // Already plain name
+      const examSubject = formattedSubject.toLowerCase();
     
       const questions = await prisma.question.findMany({
         where: {
@@ -162,7 +163,7 @@ export const jambResolvers = {
       });
     
       const subject = await prisma.subject.findFirst({
-        where: { name: formattedSubject },
+        where: { name: formattedSubject, examType: 'jamb' }, // Add examType filter
       });
       if (!subject) {
         throw new Error(`Subject ${formattedSubject} not found`);

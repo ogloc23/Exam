@@ -18,6 +18,7 @@ const YEARS = ['2005', '2006', '2007', '2008', '2009', '2010', '2011',
 const JAMB_TIME_LIMIT = 5400 * 1000; // 90 minutes in milliseconds
 exports.jambResolvers = {
     Query: {
+        years: () => YEARS,
         fetchJambSubjectQuestions: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { sessionId }) {
             const session = yield prisma.jambExamSession.findUnique({
                 where: { id: sessionId },
@@ -28,7 +29,7 @@ exports.jambResolvers = {
             if (!session.currentSubject) {
                 throw new Error('No current subject to fetch questions for');
             }
-            const examSubject = session.currentSubject.replace(' (JAMB)', '').toLowerCase();
+            const examSubject = session.currentSubject.toLowerCase();
             const questions = yield prisma.question.findMany({
                 where: {
                     examType: 'jamb',
@@ -52,7 +53,7 @@ exports.jambResolvers = {
             if (subjects.length !== 4) {
                 throw new Error('Exactly 4 subjects must be selected for JAMB exam');
             }
-            if (!subjects.includes('English Language (JAMB)')) {
+            if (!subjects.includes('English Language')) { // Removed (JAMB)
                 throw new Error('English Language is compulsory for JAMB');
             }
             if (!YEARS.includes(examYear)) {
@@ -61,13 +62,13 @@ exports.jambResolvers = {
             const jambSubjects = yield prisma.subject.findMany({
                 where: { examType: 'jamb' },
             });
-            const validSubjects = jambSubjects.map(s => s.name);
+            const validSubjects = jambSubjects.map(s => s.name); // e.g., "English Language"
             if (!subjects.every(sub => validSubjects.includes(sub))) {
                 throw new Error('Invalid JAMB subjects selected');
             }
             const session = yield prisma.jambExamSession.create({
                 data: {
-                    subjects,
+                    subjects, // Store plain names
                     currentSubject: subjects[0],
                     examYear,
                     startTime: new Date(),
@@ -123,8 +124,8 @@ exports.jambResolvers = {
             if (seconds > 0 || (hours === 0 && minutes === 0))
                 remainingTimeStr += `${seconds}s`;
             remainingTimeStr = remainingTimeStr.trim();
-            const formattedSubject = session.currentSubject;
-            const examSubject = formattedSubject.replace(' (JAMB)', '').toLowerCase();
+            const formattedSubject = session.currentSubject; // Already plain name
+            const examSubject = formattedSubject.toLowerCase();
             const questions = yield prisma.question.findMany({
                 where: {
                     examType: 'jamb',
@@ -144,7 +145,7 @@ exports.jambResolvers = {
                 }
             });
             const subject = yield prisma.subject.findFirst({
-                where: { name: formattedSubject },
+                where: { name: formattedSubject, examType: 'jamb' }, // Add examType filter
             });
             if (!subject) {
                 throw new Error(`Subject ${formattedSubject} not found`);
