@@ -58,14 +58,17 @@ exports.fetchResolvers = {
             });
             const seenIds = new Set(existingQuestions.map(q => q.id));
             const allQuestions = [...existingQuestions];
-            const totalQuestionsToReturn = 20;
-            const maxAttempts = 50; // Reduced to avoid timeout
-            try {
-                yield prisma.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-                    var _a, _b, _c, _d;
+            const totalQuestionsTarget = 40; // Target 40 questions in DB
+            const batchSize = 20; // Fetch in batches of 20
+            const maxAttemptsPerBatch = 50;
+            yield prisma.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
+                var _a, _b, _c, _d;
+                // Fetch batches until we have at least 40 questions
+                while (allQuestions.length < totalQuestionsTarget) {
                     let consecutiveDuplicates = 0;
                     const duplicateThreshold = 10;
-                    for (let i = 0; i < maxAttempts && consecutiveDuplicates < duplicateThreshold && allQuestions.length < totalQuestionsToReturn; i++) {
+                    let batchCount = 0;
+                    for (let i = 0; i < maxAttemptsPerBatch && consecutiveDuplicates < duplicateThreshold && batchCount < batchSize; i++) {
                         try {
                             const response = yield apiClient.get('/q', {
                                 params: {
@@ -74,7 +77,7 @@ exports.fetchResolvers = {
                                     type: examType === 'jamb' ? 'utme' : examType,
                                 },
                             });
-                            console.log(`API Response for ${examSubject} (attempt ${i}):`, JSON.stringify(response.data, null, 2));
+                            console.log(`API Response for ${examSubject} (attempt ${i}, batch ${Math.floor(allQuestions.length / batchSize) + 1}):`, response.data);
                             const questionData = response.data.data && !Array.isArray(response.data.data)
                                 ? [response.data.data]
                                 : response.data.data || [];
@@ -98,25 +101,27 @@ exports.fetchResolvers = {
                                 consecutiveDuplicates++;
                                 continue;
                             }
+                            const answerIndex = ['a', 'b', 'c', 'd'].indexOf(String(question.answer).toLowerCase());
+                            const answerText = answerIndex !== -1 ? options[answerIndex] : question.answer;
                             const formattedQuestion = {
                                 id: questionId,
                                 question: question.question || 'No question text provided',
                                 options,
-                                answer: String(question.answer).toLowerCase(), // Ensure string
+                                answer: answerText,
                                 examType: examType.toLowerCase(),
                                 examSubject: dbSubject,
                                 examYear,
                             };
-                            console.log(`Attempting upsert for ${questionId}:`, formattedQuestion);
                             const upsertResult = yield tx.question.upsert({
                                 where: { examYear_id: { examYear, id: questionId } },
                                 update: formattedQuestion,
                                 create: formattedQuestion,
                             });
-                            console.log(`Successfully upserted ${questionId}:`, upsertResult);
+                            console.log(`Successfully upserted ${questionId}`);
                             seenIds.add(questionId);
                             allQuestions.push(formattedQuestion);
                             consecutiveDuplicates = 0;
+                            batchCount++;
                         }
                         catch (apiError) {
                             console.error(`API call failed on attempt ${i}:`, {
@@ -128,38 +133,39 @@ exports.fetchResolvers = {
                             continue;
                         }
                     }
-                    console.log(`Fetched ${allQuestions.length} unique questions for ${examSubject} ${examYear}`);
-                    if (allQuestions.length < totalQuestionsToReturn) {
-                        const needed = totalQuestionsToReturn - allQuestions.length;
-                        console.log(`Adding ${needed} mock questions for ${examSubject}`);
-                        const mockQuestions = Array.from({ length: needed }, (_, i) => ({
-                            id: `${examYear}-mock-${i + 1}`,
-                            question: `Mock ${examSubject} question ${i + 1}`,
-                            options: ['a', 'b', 'c', 'd'],
-                            answer: 'a',
-                            examType: examType.toLowerCase(),
-                            examSubject: dbSubject,
-                            examYear,
-                        }));
-                        for (const mock of mockQuestions) {
-                            console.log(`Attempting upsert for mock ${mock.id}:`, mock);
-                            const mockResult = yield tx.question.upsert({
-                                where: { examYear_id: { examYear, id: mock.id } },
-                                update: mock,
-                                create: mock,
-                            });
-                            console.log(`Successfully upserted mock ${mock.id}:`, mockResult);
-                            allQuestions.push(mock);
-                        }
+                    console.log(`Batch completed. Total questions so far: ${allQuestions.length}`);
+                    // Break if we've hit or exceeded 40
+                    if (allQuestions.length >= totalQuestionsTarget)
+                        break;
+                }
+                // Add mocks if we still don’t have 40
+                if (allQuestions.length < totalQuestionsTarget) {
+                    const needed = totalQuestionsTarget - allQuestions.length;
+                    console.log(`Adding ${needed} mock questions to reach ${totalQuestionsTarget} for ${examSubject}`);
+                    const mockQuestions = Array.from({ length: needed }, (_, i) => ({
+                        id: `${examYear}-mock-${i + 1 + allQuestions.length}`,
+                        question: `Mock ${examSubject} question ${i + 1 + allQuestions.length}`,
+                        options: ['a', 'b', 'c', 'd'],
+                        answer: 'a',
+                        examType: examType.toLowerCase(),
+                        examSubject: dbSubject,
+                        examYear,
+                    }));
+                    for (const mock of mockQuestions) {
+                        const mockResult = yield tx.question.upsert({
+                            where: { examYear_id: { examYear, id: mock.id } },
+                            update: mock,
+                            create: mock,
+                        });
+                        allQuestions.push(mockResult);
                     }
-                }), { maxWait: 10000, timeout: 20000 }); // Extended timeouts
-            }
-            catch (transactionError) {
-                console.error('Transaction failed with details:', transactionError);
-                throw new Error('Failed to upsert questions to database');
-            }
+                }
+                // Confirmation log
+                console.log(`Success: Fetched and saved ${allQuestions.length} questions for ${examSubject} ${examYear} to the database`);
+            }), { maxWait: 10000, timeout: 20000 });
+            // Return first 20 as before
             const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());
-            return shuffledQuestions.slice(0, totalQuestionsToReturn);
+            return shuffledQuestions.slice(0, 20);
         }),
         fetchStudentQuestions: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { examType, examSubject, examYear }) {
             if (!EXAM_TYPES.includes(examType.toLowerCase())) {
