@@ -50,10 +50,12 @@ exports.jambResolvers = {
     },
     Mutation: {
         startJambExam: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { subjects, examYear }) {
-            if (subjects.length !== 4) {
+            // Trim subjects to remove extra spaces
+            const trimmedSubjects = subjects.map(s => s.trim());
+            if (trimmedSubjects.length !== 4) {
                 throw new Error('Exactly 4 subjects must be selected for JAMB exam');
             }
-            if (!subjects.includes('English Language')) { // Removed (JAMB)
+            if (!trimmedSubjects.includes('English Language')) {
                 throw new Error('English Language is compulsory for JAMB');
             }
             if (!YEARS.includes(examYear)) {
@@ -63,13 +65,14 @@ exports.jambResolvers = {
                 where: { examType: 'jamb' },
             });
             const validSubjects = jambSubjects.map(s => s.name); // e.g., "English Language"
-            if (!subjects.every(sub => validSubjects.includes(sub))) {
-                throw new Error('Invalid JAMB subjects selected');
+            if (!trimmedSubjects.every(sub => validSubjects.includes(sub))) {
+                const invalidSubjects = trimmedSubjects.filter(sub => !validSubjects.includes(sub));
+                throw new Error(`Invalid JAMB subjects selected: ${invalidSubjects.join(', ')}`);
             }
             const session = yield prisma.jambExamSession.create({
                 data: {
-                    subjects, // Store plain names
-                    currentSubject: subjects[0],
+                    subjects: trimmedSubjects, // Store trimmed names
+                    currentSubject: trimmedSubjects[0],
                     examYear,
                     startTime: new Date(),
                     isCompleted: false,
