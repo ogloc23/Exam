@@ -1,8 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.submitTypeDefs = void 0;
-const apollo_server_1 = require("apollo-server");
-exports.submitTypeDefs = (0, apollo_server_1.gql) `
+const graphql_tag_1 = require("graphql-tag");
+exports.submitTypeDefs = (0, graphql_tag_1.gql) `
   type QuestionOption {
     selectedAnswer: String
     isCorrect: Boolean!

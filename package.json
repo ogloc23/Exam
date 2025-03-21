@@ -1,32 +1,36 @@
 {
   "name": "jamb-exam-endpoint",
   "version": "1.0.0",
-  
-   "scripts": {
-  "start": "nodemon src/index.ts",                   
-  "build": "tsc && npx prisma generate",              
-  "serve": "node dist/index.js",                      
-  "deploy": "npm install && tsc && npx prisma generate && npx prisma db push", 
-  "questions": "npx ts-node checkQuestions.ts",       
-  "seed": "npx ts-node src/seed.ts",                  
-  "prisma:init": "prisma init",                       
-  "prisma:migrate": "prisma migrate dev --name init", 
-  "prisma:generate": "prisma generate"                
-},
-  
+  "scripts": {
+    "start": "nodemon src/index.ts",
+    "build": "tsc && npx prisma generate",
+    "serve": "node dist/index.js",
+    "deploy": "npm install && tsc && npx prisma generate && npx prisma db push",
+    "questions": "npx ts-node checkQuestions.ts",
+    "seed": "npx ts-node src/seed.ts",
+    "prisma:init": "prisma init",
+    "prisma:migrate": "prisma migrate dev --name init",
+    "prisma:generate": "prisma generate"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
     "@prisma/client": "^6.5.0",
-    "@types/axios": "^0.14.4",
-    "@types/express": "^5.0.0",
-    "@types/node": "^22.13.10",
-    "apollo-server": "^3.13.0",
+    "apollo-server-express": "^3.13.0",
     "axios": "^1.8.3",
-    "express": "^4.21.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.18.2",
     "graphql": "^16.10.0",
+    "graphql-tag": "^2.12.6"
+  },
+  "devDependencies": {
+    "@types/axios": "^0.14.4",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.17",
+    "@types/node": "^22.13.10",
     "nodemon": "^3.1.9",
     "prisma": "^6.5.0",
     "ts-node": "^10.9.2",

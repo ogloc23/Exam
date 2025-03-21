@@ -1,5 +1,4 @@
-import { gql } from 'apollo-server';
-
+import { gql } from 'graphql-tag';
 export const baseTypeDefs = gql`
   scalar DateTime
 

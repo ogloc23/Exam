@@ -1,8 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.fetchTypeDefs = void 0;
-const apollo_server_1 = require("apollo-server");
-exports.fetchTypeDefs = (0, apollo_server_1.gql) `
+const graphql_tag_1 = require("graphql-tag");
+exports.fetchTypeDefs = (0, graphql_tag_1.gql) `
   type Question {
     id: String!
     question: String!

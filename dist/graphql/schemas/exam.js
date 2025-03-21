@@ -1,8 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.examTypeDefs = void 0;
-const apollo_server_1 = require("apollo-server");
-exports.examTypeDefs = (0, apollo_server_1.gql) `
+const graphql_tag_1 = require("graphql-tag");
+exports.examTypeDefs = (0, graphql_tag_1.gql) `
   type Subject {
     id: Int!
     name: String!

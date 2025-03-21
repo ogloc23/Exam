@@ -1,8 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.jambTypeDefs = void 0;
-const apollo_server_1 = require("apollo-server");
-exports.jambTypeDefs = (0, apollo_server_1.gql) `
+const graphql_tag_1 = require("graphql-tag");
+exports.jambTypeDefs = (0, graphql_tag_1.gql) `
   scalar DateTime
 
   type Question {
