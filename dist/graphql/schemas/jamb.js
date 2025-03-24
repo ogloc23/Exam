@@ -44,7 +44,7 @@ exports.jambTypeDefs = (0, graphql_tag_1.gql) `
 
     finishJambExam(
       sessionId: Int!
-      answers: [AnswerInput!]!
+      answers: [AnswerInput!] # Changed from [AnswerInput!]! to [AnswerInput!]
     ): JambExamResult!
   }
 `;

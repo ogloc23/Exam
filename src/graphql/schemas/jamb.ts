@@ -42,7 +42,7 @@ export const jambTypeDefs = gql`
 
     finishJambExam(
       sessionId: Int!
-      answers: [AnswerInput!]!
+      answers: [AnswerInput!] # Changed from [AnswerInput!]! to [AnswerInput!]
     ): JambExamResult!
   }
 `;

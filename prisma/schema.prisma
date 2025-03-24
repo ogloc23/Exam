@@ -26,6 +26,7 @@ model Score {
   subject       Subject         @relation(fields: [subjectId], references: [id])
   jambSession   JambExamSession? @relation(fields: [jambSessionId], references: [id])
   jambSessionId Int?
+  @@unique([jambSessionId, examSubject]) // Added this
 }
 
 model Question {

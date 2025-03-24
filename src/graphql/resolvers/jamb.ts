@@ -1,5 +1,5 @@
 // src/graphql/resolvers/jamb.ts
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Question } from '@prisma/client';
 
 const prisma = new PrismaClient();
 const YEARS = ['2005', '2006', '2007', '2008', '2009', '2010', '2011', 
@@ -35,10 +35,13 @@ export const jambResolvers = {
       });
     },
 
-    finishJambExam: async (_: any, { sessionId, answers }: { sessionId: number; answers: { questionId: string; answer: string }[] }) => {
+    finishJambExam: async (
+      _: any,
+      { sessionId, answers }: { sessionId: number; answers?: { questionId: string; answer: string }[] }
+    ) => {
       const session = await prisma.jambExamSession.findUnique({
         where: { id: sessionId },
-        include: { scores: true },
+        include: { scores: true, answers: true },
       });
       if (!session) throw new Error('Session not found');
       if (session.isCompleted) throw new Error('JAMB session already completed');
@@ -68,26 +71,35 @@ export const jambResolvers = {
         };
       }
 
+      // Use provided answers or existing ones
+      let sessionAnswers = session.answers;
+      if (answers && answers.length > 0) {
+        await prisma.answer.createMany({
+          data: answers.map(({ questionId, answer }) => ({
+            sessionId,
+            questionId,
+            answer: answer.toLowerCase(),
+          })),
+          skipDuplicates: true,
+        });
+        sessionAnswers = await prisma.answer.findMany({
+          where: { sessionId },
+        });
+      }
+
       const allSubjects = ['english language', 'mathematics', 'physics', 'chemistry'];
-      const questions = await prisma.question.findMany({
-        where: {
-          examType: 'jamb',
-          examSubject: { in: allSubjects },
-          examYear: session.examYear,
-          id: { in: answers.map(a => a.questionId) },
-        },
-      });
-
-      if (questions.length !== answers.length) throw new Error('Invalid question IDs');
-
-      await prisma.answer.createMany({
-        data: answers.map(({ questionId, answer }) => ({
-          sessionId,
-          questionId,
-          answer: answer.toLowerCase(),
-        })),
-        skipDuplicates: true,
-      });
+      let questions: Question[] = []; // Explicitly type as Question[]
+      if (sessionAnswers.length > 0) {
+        const questionIds = sessionAnswers.map(a => a.questionId);
+        questions = await prisma.question.findMany({
+          where: {
+            examType: 'jamb',
+            examSubject: { in: allSubjects },
+            examYear: session.examYear,
+            id: { in: questionIds },
+          },
+        });
+      }
 
       // Fetch or create Subject records
       const subjectRecords = await prisma.subject.findMany({
@@ -106,19 +118,16 @@ export const jambResolvers = {
             })
           )
         );
-        if (newSubjects.length !== missingSubjects.length) {
-          throw new Error('Failed to create all missing subjects');
-        }
         newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
       }
 
       const subjectScores = allSubjects.map(subject => {
         const subjectQuestions = questions.filter(q => q.examSubject === subject);
-        const subjectAnswers = answers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
+        const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
         const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
           const question = subjectQuestions.find(q => q.id === questionId);
-          return acc + (question && question.answer === answer.toLowerCase() ? 1 : 0);
-        }, 0);
+          return acc + (question && question.answer.toLowerCase() === answer.toLowerCase() ? 1 : 0);
+        }, 0); // Score is 0 if no answers exist
 
         return {
           examType: 'jamb',
@@ -131,10 +140,21 @@ export const jambResolvers = {
         };
       });
 
-      await prisma.score.createMany({
-        data: subjectScores,
-        skipDuplicates: true,
-      });
+      // Upsert scores with the new unique constraint
+      await prisma.$transaction(
+        subjectScores.map(score =>
+          prisma.score.upsert({
+            where: {
+              jambSessionId_examSubject: {
+                jambSessionId: sessionId,
+                examSubject: score.examSubject,
+              },
+            },
+            update: { score: score.score },
+            create: score,
+          })
+        )
+      );
 
       const updatedSession = await prisma.jambExamSession.update({
         where: { id: sessionId },
@@ -142,7 +162,7 @@ export const jambResolvers = {
         include: { scores: true },
       });
 
-      const totalScore = subjectScores.reduce((sum, score) => sum + score.score, 0);
+      const totalScore = updatedSession.scores.reduce((sum, score) => sum + score.score, 0);
       const totalSeconds = Math.floor(elapsedTime / 1000);
       const hours = Math.floor(totalSeconds / 3600);
       const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -193,7 +213,7 @@ export const jambResolvers = {
 async function autoSubmitJambExam(sessionId: number) {
   const session = await prisma.jambExamSession.findUnique({
     where: { id: sessionId },
-    include: { scores: true },
+    include: { scores: true, answers: true },
   });
   if (!session || session.isCompleted) return;
 
@@ -219,22 +239,42 @@ async function autoSubmitJambExam(sessionId: number) {
           })
         )
       );
-      if (newSubjects.length !== missingSubjects.length) {
-        throw new Error('Failed to create all missing subjects in auto-submit');
-      }
       newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
     }
 
-    await prisma.score.createMany({
-      data: remainingSubjects.map(subject => ({
+    const sessionAnswers = session.answers;
+    const questionIds = sessionAnswers.map(a => a.questionId);
+    const questions = await prisma.question.findMany({
+      where: {
+        examType: 'jamb',
+        examSubject: { in: remainingSubjects },
+        examYear: session.examYear,
+        id: { in: questionIds },
+      },
+    });
+
+    const subjectScores = remainingSubjects.map(subject => {
+      const subjectQuestions = questions.filter(q => q.examSubject === subject);
+      const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
+      const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
+        const question = subjectQuestions.find(q => q.id === questionId);
+        return acc + (question && question.answer.toLowerCase() === answer.toLowerCase() ? 1 : 0);
+      }, 0);
+
+      return {
         examType: 'jamb',
         examSubject: subject,
         subjectId: subjectMap.get(subject)!,
         examYear: session.examYear,
-        score: 0,
+        score,
         date: new Date(),
         jambSessionId: sessionId,
-      })),
+      };
+    });
+
+    await prisma.score.createMany({
+      data: subjectScores,
+      skipDuplicates: true,
     });
   }
 
