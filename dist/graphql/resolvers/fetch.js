@@ -42,14 +42,15 @@ exports.fetchResolvers = {
             }
             const dbSubject = examSubject.toLowerCase();
             const apiSubject = dbSubject === 'english language' ? 'english' : dbSubject;
-            // Check or create subject
             let subject = yield prisma.subject.findFirst({
                 where: { name: dbSubject, examType: examTypeLower },
             });
             if (!subject) {
                 console.log(`Subject "${dbSubject}" not found for "${examTypeLower}", creating it.`);
-                subject = yield prisma.subject.create({
-                    data: { name: dbSubject, examType: examTypeLower },
+                subject = yield prisma.subject.upsert({
+                    where: { name_examType: { name: dbSubject, examType: examTypeLower } },
+                    update: {},
+                    create: { name: dbSubject, examType: examTypeLower },
                 });
             }
             let allQuestions = yield prisma.question.findMany({
@@ -63,12 +64,12 @@ exports.fetchResolvers = {
             }
             const seenIds = new Set(allQuestions.map(q => q.id));
             const batchSize = 20;
-            const maxAttemptsPerBatch = 30;
+            const maxAttemptsPerBatch = 10;
             const batchesNeeded = Math.ceil((totalQuestionsTarget - allQuestions.length) / batchSize);
             for (let batch = 0; batch < batchesNeeded && allQuestions.length < totalQuestionsTarget; batch++) {
                 const batchQuestions = [];
                 let consecutiveDuplicates = 0;
-                const duplicateThreshold = 10;
+                const duplicateThreshold = 5;
                 for (let i = 0; i < maxAttemptsPerBatch && consecutiveDuplicates < duplicateThreshold && batchQuestions.length < batchSize && allQuestions.length < totalQuestionsTarget; i++) {
                     try {
                         const response = yield apiClient.get('/q', {
@@ -136,7 +137,7 @@ exports.fetchResolvers = {
                         allQuestions = yield tx.question.findMany({
                             where: { examType: examTypeLower, examSubject: dbSubject, examYear },
                         });
-                    }), { maxWait: 15000, timeout: 30000 });
+                    }), { maxWait: 10000, timeout: 20000 });
                     console.log(`Batch ${batch + 1} completed. Total questions: ${allQuestions.length}`);
                 }
             }
@@ -160,7 +161,7 @@ exports.fetchResolvers = {
                     allQuestions = yield tx.question.findMany({
                         where: { examType: examTypeLower, examSubject: dbSubject, examYear },
                     });
-                }), { maxWait: 15000, timeout: 30000 });
+                }), { maxWait: 10000, timeout: 20000 });
             }
             console.log(`Fetched and saved ${allQuestions.length} questions for ${dbSubject} ${examYear}`);
             const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());

@@ -9,6 +9,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+// src/seed.ts
 const client_1 = require("@prisma/client");
 const prisma = new client_1.PrismaClient();
 const JAMB_SUBJECTS = [
@@ -50,28 +51,21 @@ function seed() {
         try {
             yield prisma.subject.deleteMany();
             console.log('Existing subjects cleared.');
-            // Seed JAMB subjects
-            yield Promise.all(JAMB_SUBJECTS.map((name) => prisma.subject.create({
-                data: {
-                    name, // No (JAMB) suffix
-                    examType: 'jamb',
-                },
-            })));
-            // Seed WAEC subjects
-            yield Promise.all(WAEC_SUBJECTS.map((name) => prisma.subject.create({
-                data: {
-                    name, // No (WAEC) suffix
-                    examType: 'waec',
-                },
-            })));
-            // Seed NECO subjects
-            yield Promise.all(NECO_SUBJECTS.map((name) => prisma.subject.create({
-                data: {
-                    name, // No (NECO) suffix
-                    examType: 'neco',
-                },
-            })));
-            console.log('Subjects seeded successfully!');
+            const seedSubjects = (subjects, examType) => __awaiter(this, void 0, void 0, function* () {
+                const data = subjects.map(name => ({
+                    name: name.toLowerCase(), // Normalize to lowercase
+                    examType,
+                }));
+                yield prisma.subject.createMany({
+                    data,
+                    skipDuplicates: true, // Rely on @@unique([name, examType])
+                });
+                console.log(`${examType.toUpperCase()} subjects seeded.`);
+            });
+            yield seedSubjects(JAMB_SUBJECTS, 'jamb');
+            yield seedSubjects(WAEC_SUBJECTS, 'waec');
+            yield seedSubjects(NECO_SUBJECTS, 'neco');
+            console.log('All subjects seeded successfully!');
         }
         catch (error) {
             console.error('Error seeding subjects:', error);
