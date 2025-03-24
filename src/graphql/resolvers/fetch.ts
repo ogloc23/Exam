@@ -21,7 +21,7 @@ export const fetchResolvers = {
   Query: {
     fetchExternalQuestions: async (
       _: any,
-      { examType, examSubject, examYear }: { examType: string; examSubject: string; examYear: string }
+      { examType, examSubject, examYear, offset = 0 }: { examType: string; examSubject: string; examYear: string; offset?: number }
     ) => {
       const examTypeLower = examType.toLowerCase();
       if (!EXAM_TYPES.includes(examTypeLower)) {
@@ -35,146 +35,163 @@ export const fetchResolvers = {
       const apiSubject = dbSubject === 'english language' ? 'english' : dbSubject;
 
       let subject = await prisma.subject.findFirst({
-        where: { name: dbSubject, examType: examTypeLower },
+        where: {
+          name: { equals: examSubject, mode: 'insensitive' },
+          examType: examTypeLower,
+        },
       });
       if (!subject) {
-        console.log(`Subject "${dbSubject}" not found for "${examTypeLower}", creating it.`);
+        console.log(`Subject "${examSubject}" not found for "${examTypeLower}", creating it.`);
         subject = await prisma.subject.upsert({
-          where: { name_examType: { name: dbSubject, examType: examTypeLower } },
+          where: { name_examType: { name: examSubject, examType: examTypeLower } },
           update: {},
-          create: { name: dbSubject, examType: examTypeLower },
+          create: { name: examSubject, examType: examTypeLower },
         });
       }
 
+      const dbSubjectStored = subject.name.toLowerCase();
+
       let allQuestions = await prisma.question.findMany({
-        where: { examType: examTypeLower, examSubject: dbSubject, examYear },
+        where: { examType: examTypeLower, examSubject: dbSubjectStored, examYear },
       });
 
       const totalQuestionsTarget = 40;
-      if (allQuestions.length >= totalQuestionsTarget) {
-        console.log(`Returning ${allQuestions.length} cached questions for ${dbSubject} ${examYear}`);
-        const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());
-        return shuffledQuestions.slice(0, 20);
-      }
+      if (allQuestions.length < totalQuestionsTarget) {
+        const seenIds = new Set(allQuestions.map(q => q.id));
+        const batchSize = 20;
+        const maxAttemptsPerBatch = 10;
+        const batchesNeeded = Math.ceil((totalQuestionsTarget - allQuestions.length) / batchSize);
 
-      const seenIds = new Set(allQuestions.map(q => q.id));
-      const batchSize = 20;
-      const maxAttemptsPerBatch = 10;
-      const batchesNeeded = Math.ceil((totalQuestionsTarget - allQuestions.length) / batchSize);
+        for (let batch = 0; batch < batchesNeeded && allQuestions.length < totalQuestionsTarget; batch++) {
+          const batchQuestions: any[] = [];
+          let consecutiveDuplicates = 0;
+          const duplicateThreshold = 5;
 
-      for (let batch = 0; batch < batchesNeeded && allQuestions.length < totalQuestionsTarget; batch++) {
-        const batchQuestions: any[] = [];
-        let consecutiveDuplicates = 0;
-        const duplicateThreshold = 5;
+          for (let i = 0; i < maxAttemptsPerBatch && consecutiveDuplicates < duplicateThreshold && batchQuestions.length < batchSize && allQuestions.length < totalQuestionsTarget; i++) {
+            try {
+              const response = await apiClient.get('/q', {
+                params: { 
+                  subject: apiSubject, 
+                  year: examYear, 
+                  type: examTypeLower === 'jamb' ? 'utme' : examTypeLower,
+                },
+              });
+              console.log(`API Response for ${dbSubjectStored} (attempt ${i}, batch ${batch + 1}):`, response.data);
 
-        for (let i = 0; i < maxAttemptsPerBatch && consecutiveDuplicates < duplicateThreshold && batchQuestions.length < batchSize && allQuestions.length < totalQuestionsTarget; i++) {
-          try {
-            const response = await apiClient.get('/q', {
-              params: { 
-                subject: apiSubject, 
-                year: examYear, 
-                type: examTypeLower === 'jamb' ? 'utme' : examTypeLower,
-              },
-            });
-            console.log(`API Response for ${dbSubject} (attempt ${i}, batch ${batch + 1}):`, response.data);
+              const questionData = response.data.data && !Array.isArray(response.data.data) 
+                ? [response.data.data] 
+                : response.data.data || [];
+              if (!questionData.length || !questionData[0]?.id || !questionData[0]?.answer) {
+                console.warn(`Skipping invalid question on attempt ${i}:`, questionData);
+                consecutiveDuplicates++;
+                continue;
+              }
 
-            const questionData = response.data.data && !Array.isArray(response.data.data) 
-              ? [response.data.data] 
-              : response.data.data || [];
-            if (!questionData.length || !questionData[0]?.id || !questionData[0]?.answer) {
-              console.warn(`Skipping invalid question on attempt ${i}:`, questionData);
+              const question = questionData[0];
+              const questionId = `${examYear}-${question.id}`;
+              if (seenIds.has(questionId)) {
+                console.log(`Duplicate found: ${questionId}`);
+                consecutiveDuplicates++;
+                continue;
+              }
+
+              const options = Object.values(question.option || {})
+                .filter((opt): opt is string => typeof opt === 'string' && opt !== '')
+                .map(opt => opt as string);
+
+              if (options.length < 2) {
+                console.warn(`Skipping ${questionId}: insufficient options (${options.length})`);
+                consecutiveDuplicates++;
+                continue;
+              }
+
+              const answerIndex = ['a', 'b', 'c', 'd'].indexOf(String(question.answer).toLowerCase());
+              const answerText = answerIndex !== -1 ? options[answerIndex] : question.answer;
+
+              const formattedQuestion = {
+                id: questionId,
+                question: question.question || 'No question text provided',
+                options,
+                answer: answerText,
+                examType: examTypeLower,
+                examSubject: dbSubjectStored,
+                examYear,
+              };
+
+              batchQuestions.push(formattedQuestion);
+              seenIds.add(questionId);
+              consecutiveDuplicates = 0;
+            } catch (apiError: any) {
+              console.error(`API call failed on attempt ${i}:`, {
+                message: apiError.message,
+                response: apiError.response?.data,
+                status: apiError.response?.status,
+              });
               consecutiveDuplicates++;
               continue;
             }
+          }
 
-            const question = questionData[0];
-            const questionId = `${examYear}-${question.id}`;
-            if (seenIds.has(questionId)) {
-              console.log(`Duplicate found: ${questionId}`);
-              consecutiveDuplicates++;
-              continue;
-            }
-
-            const options = Object.values(question.option || {})
-              .filter((opt): opt is string => typeof opt === 'string' && opt !== '')
-              .map(opt => opt as string);
-
-            if (options.length < 2) {
-              console.warn(`Skipping ${questionId}: insufficient options (${options.length})`);
-              consecutiveDuplicates++;
-              continue;
-            }
-
-            const answerIndex = ['a', 'b', 'c', 'd'].indexOf(String(question.answer).toLowerCase());
-            const answerText = answerIndex !== -1 ? options[answerIndex] : question.answer;
-
-            const formattedQuestion = {
-              id: questionId,
-              question: question.question || 'No question text provided',
-              options,
-              answer: answerText,
-              examType: examTypeLower,
-              examSubject: dbSubject,
-              examYear,
-            };
-
-            batchQuestions.push(formattedQuestion);
-            seenIds.add(questionId);
-            consecutiveDuplicates = 0;
-          } catch (apiError: any) {
-            console.error(`API call failed on attempt ${i}:`, {
-              message: apiError.message,
-              response: apiError.response?.data,
-              status: apiError.response?.status,
-            });
-            consecutiveDuplicates++;
-            continue;
+          if (batchQuestions.length > 0) {
+            await prisma.$transaction(async (tx) => {
+              await tx.question.createMany({
+                data: batchQuestions,
+                skipDuplicates: true,
+              });
+              allQuestions = await tx.question.findMany({
+                where: { examType: examTypeLower, examSubject: dbSubjectStored, examYear },
+              });
+            }, { maxWait: 10000, timeout: 20000 });
+            console.log(`Batch ${batch + 1} completed. Total questions: ${allQuestions.length}`);
           }
         }
 
-        if (batchQuestions.length > 0) {
+        if (allQuestions.length < totalQuestionsTarget) {
+          const needed = totalQuestionsTarget - allQuestions.length;
+          console.log(`Adding ${needed} mock questions for ${dbSubjectStored}`);
+          const mockQuestions = Array.from({ length: needed }, (_, i) => ({
+            id: `${examYear}-mock-${i + 1 + allQuestions.length}`,
+            question: `Mock ${dbSubjectStored} question ${i + 1 + allQuestions.length}`,
+            options: ['a', 'b', 'c', 'd'],
+            answer: 'a',
+            examType: examTypeLower,
+            examSubject: dbSubjectStored,
+            examYear,
+          }));
+
           await prisma.$transaction(async (tx) => {
             await tx.question.createMany({
-              data: batchQuestions,
+              data: mockQuestions,
               skipDuplicates: true,
             });
             allQuestions = await tx.question.findMany({
-              where: { examType: examTypeLower, examSubject: dbSubject, examYear },
+              where: { examType: examTypeLower, examSubject: dbSubjectStored, examYear },
             });
           }, { maxWait: 10000, timeout: 20000 });
-          console.log(`Batch ${batch + 1} completed. Total questions: ${allQuestions.length}`);
         }
       }
 
-      if (allQuestions.length < totalQuestionsTarget) {
-        const needed = totalQuestionsTarget - allQuestions.length;
-        console.log(`Adding ${needed} mock questions for ${dbSubject}`);
-        const mockQuestions = Array.from({ length: needed }, (_, i) => ({
-          id: `${examYear}-mock-${i + 1 + allQuestions.length}`,
-          question: `Mock ${dbSubject} question ${i + 1 + allQuestions.length}`,
-          options: ['a', 'b', 'c', 'd'],
-          answer: 'a',
-          examType: examTypeLower,
-          examSubject: dbSubject,
-          examYear,
-        }));
+      console.log(`Fetched and saved ${allQuestions.length} questions for ${dbSubjectStored} ${examYear}`);
+      
+      // Shuffle and slice based on offset
+      const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());
+      const batchSize = 20;
+      const startIndex = offset * batchSize;
+      const endIndex = startIndex + batchSize;
 
-        await prisma.$transaction(async (tx) => {
-          await tx.question.createMany({
-            data: mockQuestions,
-            skipDuplicates: true,
-          });
-          allQuestions = await tx.question.findMany({
-            where: { examType: examTypeLower, examSubject: dbSubject, examYear },
-          });
-        }, { maxWait: 10000, timeout: 20000 });
+      // Log the next batch to simulate "automatic" fetch
+      if (startIndex === 0 && allQuestions.length > batchSize) {
+        const nextBatch = shuffledQuestions.slice(batchSize, 2 * batchSize);
+        console.log(`Next batch of 20 questions prepared (offset 1):`, nextBatch);
       }
 
-      console.log(`Fetched and saved ${allQuestions.length} questions for ${dbSubject} ${examYear}`);
-      const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());
-      return shuffledQuestions.slice(0, 20);
+      const result = shuffledQuestions.slice(startIndex, endIndex);
+      if (result.length === 0) {
+        throw new Error(`No more questions available at offset ${offset}`);
+      }
+
+      return result;
     },
-  
 
     fetchStudentQuestions: async (
       _: any,
