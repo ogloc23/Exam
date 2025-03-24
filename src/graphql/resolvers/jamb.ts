@@ -10,43 +10,6 @@ const JAMB_TIME_LIMIT = 5400 * 1000; // 90 minutes in milliseconds
 export const jambResolvers = {
   Query: {
     years: () => YEARS,
-    fetchJambSubjectQuestions: async (_: any, { sessionId }: { sessionId: number }) => {
-      const session = await prisma.jambExamSession.findUnique({
-        where: { id: sessionId },
-      });
-      if (!session || session.isCompleted) {
-        throw new Error('Invalid or completed JAMB session');
-      }
-
-      const allSubjects = ['english language', 'mathematics', 'physics', 'chemistry'];
-      const subjectQuestions = await Promise.all(
-        allSubjects.map(async (subject) => {
-          const questions = await prisma.question.findMany({
-            where: {
-              examType: 'jamb',
-              examSubject: subject,
-              examYear: session.examYear,
-            },
-            take: 20,
-          });
-
-          if (questions.length < 20) {
-            throw new Error(`Insufficient questions for ${subject}: got ${questions.length}, need 20`);
-          }
-
-          return {
-            subject,
-            questions: questions.map(q => ({
-              id: q.id,
-              question: q.question,
-              options: q.options,
-            })),
-          };
-        })
-      );
-
-      return subjectQuestions;
-    },
   },
 
   Mutation: {
@@ -123,13 +86,11 @@ export const jambResolvers = {
         skipDuplicates: true,
       });
 
-      // Fetch subject IDs
       const subjectRecords = await prisma.subject.findMany({
         where: { name: { in: allSubjects }, examType: 'jamb' },
       });
       const subjectMap = new Map(subjectRecords.map(s => [s.name.toLowerCase(), s.id]));
 
-      // Calculate and save scores
       const subjectScores = allSubjects.map(subject => {
         const subjectQuestions = questions.filter(q => q.examSubject === subject);
         const subjectAnswers = answers.filter(a => subjectQuestions.some(q => q.id === a.questionId));

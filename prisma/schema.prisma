@@ -35,7 +35,7 @@ model Question {
   examType    String
   examSubject String
   examYear    String
-  answers     Answer[] // Added relation to Answer
+  answers     Answer[]
   @@unique([examYear, id])
 }
 
@@ -47,7 +47,7 @@ model JambExamSession {
   endTime        DateTime?
   isCompleted    Boolean  @default(false)
   scores         Score[]
-  answers        Answer[] // Added relation to Answer
+  answers        Answer[]
 }
 
 model Answer {
@@ -57,4 +57,6 @@ model Answer {
   answer       String
   session      JambExamSession @relation(fields: [sessionId], references: [id])
   question     Question       @relation(fields: [questionId], references: [id])
+  @@index([sessionId])
+  @@index([questionId])
 }

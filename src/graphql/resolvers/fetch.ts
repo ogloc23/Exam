@@ -233,6 +233,12 @@ export const fetchResolvers = {
       }
 
       const allSubjects = ['english language', 'mathematics', 'physics', 'chemistry'];
+      // Verify session subjects match expected
+      const invalidSubjects = session.subjects.filter(sub => !allSubjects.includes(sub.toLowerCase()));
+      if (invalidSubjects.length > 0) {
+        throw new Error(`Session contains invalid subjects: ${invalidSubjects.join(', ')}`);
+      }
+
       const subjectQuestions = await Promise.all(
         allSubjects.map(async (subject) => {
           const questions = await prisma.question.findMany({

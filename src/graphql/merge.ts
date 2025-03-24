@@ -1,11 +1,10 @@
-// Import schemas
+// src/graphql/merge.ts
 import { baseTypeDefs } from './schemas/base';
 import { examTypeDefs } from './schemas/exam';
 import { fetchTypeDefs } from './schemas/fetch';
 import { submitTypeDefs } from './schemas/submit';
 import { jambTypeDefs } from './schemas/jamb';
 
-// Import resolvers
 import { examResolvers } from './resolvers/exam';
 import { fetchResolvers } from './resolvers/fetch';
 import { submitResolvers } from './resolvers/submit';
@@ -29,12 +28,12 @@ export const resolvers = {
   },
   Query: {
     ...examResolvers.Query,
-    ...fetchResolvers.Query,
-    ...jambResolvers.Query, // Add JAMB query resolvers
+    ...fetchResolvers.Query, // Includes fetchJambSubjectQuestions
+    ...jambResolvers.Query,  // Includes years
   },
   Mutation: {
     ...submitResolvers.Mutation,
-    ...jambResolvers.Mutation,
+    ...jambResolvers.Mutation, // Includes startJambExam, finishJambExam
   },
-  JambExamSession: jambResolvers.JambExamSession, // 
+  JambExamSession: jambResolvers.JambExamSession, // Field resolver for remainingTime
 };

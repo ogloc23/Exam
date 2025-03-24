@@ -8,6 +8,7 @@ export const jambTypeDefs = gql`
     id: String!
     question: String!
     options: [String!]!
+    answer: String
   }
 
   type Score {
@@ -31,7 +32,7 @@ export const jambTypeDefs = gql`
     endTime: DateTime
     isCompleted: Boolean!
     scores: [Score!]!
-    remainingTime: String
+    remainingTime: String!
   }
 
   type JambExamResult {
@@ -49,7 +50,6 @@ export const jambTypeDefs = gql`
 
   type Query {
     years: [String!]!
-    fetchJambSubjectQuestions(sessionId: Int!): [SubjectQuestions!]!
   }
 
   type Mutation {
