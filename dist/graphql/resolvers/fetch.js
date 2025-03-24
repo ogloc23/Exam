@@ -49,7 +49,6 @@ exports.fetchResolvers = {
             if (!subject) {
                 throw new Error(`Subject "${examSubject}" not found for exam type "${examType}"`);
             }
-            // Fetch existing questions
             let allQuestions = yield prisma.question.findMany({
                 where: {
                     examType: examType.toLowerCase(),
@@ -60,8 +59,7 @@ exports.fetchResolvers = {
             const seenIds = new Set(allQuestions.map(q => q.id));
             const totalQuestionsTarget = 40;
             const batchSize = 20;
-            const maxAttemptsPerBatch = 30; // Reduced to limit time
-            // Fetch batches if needed
+            const maxAttemptsPerBatch = 30;
             if (allQuestions.length < totalQuestionsTarget) {
                 const batchesNeeded = Math.ceil((totalQuestionsTarget - allQuestions.length) / batchSize);
                 for (let batch = 0; batch < batchesNeeded && allQuestions.length < totalQuestionsTarget; batch++) {
@@ -136,10 +134,9 @@ exports.fetchResolvers = {
                             }
                         }
                         console.log(`Batch ${batch + 1} completed. Total questions so far: ${allQuestions.length}`);
-                    }), { maxWait: 15000, timeout: 30000 }); // Increased timeouts
+                    }), { maxWait: 15000, timeout: 30000 });
                 }
             }
-            // Add mocks if still under 40
             if (allQuestions.length < totalQuestionsTarget) {
                 const needed = totalQuestionsTarget - allQuestions.length;
                 console.log(`Adding ${needed} mock questions to reach ${totalQuestionsTarget} for ${examSubject}`);
@@ -163,9 +160,7 @@ exports.fetchResolvers = {
                     }
                 }), { maxWait: 15000, timeout: 30000 });
             }
-            // Confirmation log
             console.log(`Success: Fetched and saved ${allQuestions.length} questions for ${examSubject} ${examYear} to the database`);
-            // Return first 20
             const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());
             return shuffledQuestions.slice(0, 20);
         }),
@@ -179,7 +174,7 @@ exports.fetchResolvers = {
             const dbSubject = examSubject.toLowerCase();
             const subject = yield prisma.subject.findFirst({
                 where: {
-                    name: examSubject, // Updated to match plain name
+                    name: examSubject,
                     examType: examType.toLowerCase(),
                 },
             });
@@ -211,28 +206,33 @@ exports.fetchResolvers = {
             if (!session) {
                 throw new Error(`Session ${sessionId} not found`);
             }
-            const { currentSubject } = session;
-            if (!currentSubject) {
-                throw new Error(`No current subject set for session ${sessionId}`);
+            if (session.isCompleted) {
+                throw new Error(`Session ${sessionId} is already completed`);
             }
-            const examSubject = currentSubject.toLowerCase(); // No (JAMB) to replace
-            const questions = yield prisma.question.findMany({
-                where: {
-                    examType: 'jamb',
-                    examSubject,
-                    examYear: session.examYear,
-                },
-            });
-            const totalQuestionsToReturn = 20;
-            if (questions.length < totalQuestionsToReturn) {
-                throw new Error(`Insufficient questions for ${examSubject}: got ${questions.length}, need ${totalQuestionsToReturn}`);
-            }
-            const shuffledQuestions = questions.sort(() => 0.5 - Math.random());
-            return shuffledQuestions.slice(0, totalQuestionsToReturn).map(q => ({
-                id: q.id,
-                question: q.question,
-                options: q.options,
-            }));
+            const allSubjects = ['english language', 'mathematics', 'physics', 'chemistry'];
+            const subjectQuestions = yield Promise.all(allSubjects.map((subject) => __awaiter(void 0, void 0, void 0, function* () {
+                const questions = yield prisma.question.findMany({
+                    where: {
+                        examType: 'jamb',
+                        examSubject: subject,
+                        examYear: session.examYear,
+                    },
+                });
+                const totalQuestionsToReturn = 20;
+                if (questions.length < totalQuestionsToReturn) {
+                    throw new Error(`Insufficient questions for ${subject}: got ${questions.length}, need ${totalQuestionsToReturn}`);
+                }
+                const shuffledQuestions = questions.sort(() => 0.5 - Math.random());
+                return {
+                    subject,
+                    questions: shuffledQuestions.slice(0, totalQuestionsToReturn).map(q => ({
+                        id: q.id,
+                        question: q.question,
+                        options: q.options,
+                    })),
+                };
+            })));
+            return subjectQuestions;
         }),
     },
 };

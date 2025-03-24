@@ -6,8 +6,8 @@ const BASE_API_URL = 'https://questions.aloc.com.ng/api/v2';
 const ACCESS_TOKEN = 'QB-385a71b4a2ed9fd0bd27';
 const EXAM_TYPES = ['jamb', 'waec', 'neco'];
 const YEARS = ['2005', '2006', '2007', '2008', '2009', '2010', '2011', 
-    '2012', '2013', '2014', '2015', '2016', '2017', '2018', '2019', 
-    '2020', '2021', '2022', '2023'];
+  '2012', '2013', '2014', '2015', '2016', '2017', '2018', '2019', 
+  '2020', '2021', '2022', '2023'];
 
 const apiClient = axios.create({
   baseURL: BASE_API_URL,
@@ -43,7 +43,6 @@ export const fetchResolvers = {
         throw new Error(`Subject "${examSubject}" not found for exam type "${examType}"`);
       }
 
-      // Fetch existing questions
       let allQuestions = await prisma.question.findMany({
         where: {
           examType: examType.toLowerCase(),
@@ -55,9 +54,8 @@ export const fetchResolvers = {
 
       const totalQuestionsTarget = 40;
       const batchSize = 20;
-      const maxAttemptsPerBatch = 30; // Reduced to limit time
+      const maxAttemptsPerBatch = 30;
 
-      // Fetch batches if needed
       if (allQuestions.length < totalQuestionsTarget) {
         const batchesNeeded = Math.ceil((totalQuestionsTarget - allQuestions.length) / batchSize);
 
@@ -141,11 +139,10 @@ export const fetchResolvers = {
             }
 
             console.log(`Batch ${batch + 1} completed. Total questions so far: ${allQuestions.length}`);
-          }, { maxWait: 15000, timeout: 30000 }); // Increased timeouts
+          }, { maxWait: 15000, timeout: 30000 });
         }
       }
 
-      // Add mocks if still under 40
       if (allQuestions.length < totalQuestionsTarget) {
         const needed = totalQuestionsTarget - allQuestions.length;
         console.log(`Adding ${needed} mock questions to reach ${totalQuestionsTarget} for ${examSubject}`);
@@ -171,10 +168,8 @@ export const fetchResolvers = {
         }, { maxWait: 15000, timeout: 30000 });
       }
 
-      // Confirmation log
       console.log(`Success: Fetched and saved ${allQuestions.length} questions for ${examSubject} ${examYear} to the database`);
 
-      // Return first 20
       const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());
       return shuffledQuestions.slice(0, 20);
     },
@@ -197,7 +192,7 @@ export const fetchResolvers = {
       const dbSubject = examSubject.toLowerCase();
       const subject = await prisma.subject.findFirst({
         where: { 
-          name: examSubject, // Updated to match plain name
+          name: examSubject,
           examType: examType.toLowerCase(),
         },
       });
@@ -233,32 +228,39 @@ export const fetchResolvers = {
       if (!session) {
         throw new Error(`Session ${sessionId} not found`);
       }
-    
-      const { currentSubject } = session;
-      if (!currentSubject) {
-        throw new Error(`No current subject set for session ${sessionId}`);
+      if (session.isCompleted) {
+        throw new Error(`Session ${sessionId} is already completed`);
       }
-    
-      const examSubject = currentSubject.toLowerCase(); // No (JAMB) to replace
-      const questions = await prisma.question.findMany({
-        where: {
-          examType: 'jamb',
-          examSubject,
-          examYear: session.examYear,
-        },
-      });
-    
-      const totalQuestionsToReturn = 20;
-      if (questions.length < totalQuestionsToReturn) {
-        throw new Error(`Insufficient questions for ${examSubject}: got ${questions.length}, need ${totalQuestionsToReturn}`);
-      }
-    
-      const shuffledQuestions = questions.sort(() => 0.5 - Math.random());
-      return shuffledQuestions.slice(0, totalQuestionsToReturn).map(q => ({
-        id: q.id,
-        question: q.question,
-        options: q.options,
-      }));
+
+      const allSubjects = ['english language', 'mathematics', 'physics', 'chemistry'];
+      const subjectQuestions = await Promise.all(
+        allSubjects.map(async (subject) => {
+          const questions = await prisma.question.findMany({
+            where: {
+              examType: 'jamb',
+              examSubject: subject,
+              examYear: session.examYear,
+            },
+          });
+
+          const totalQuestionsToReturn = 20;
+          if (questions.length < totalQuestionsToReturn) {
+            throw new Error(`Insufficient questions for ${subject}: got ${questions.length}, need ${totalQuestionsToReturn}`);
+          }
+
+          const shuffledQuestions = questions.sort(() => 0.5 - Math.random());
+          return {
+            subject,
+            questions: shuffledQuestions.slice(0, totalQuestionsToReturn).map(q => ({
+              id: q.id,
+              question: q.question,
+              options: q.options,
+            })),
+          };
+        })
+      );
+
+      return subjectQuestions;
     },
   },
 };

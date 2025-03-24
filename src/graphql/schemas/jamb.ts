@@ -1,3 +1,4 @@
+// src/graphql/schemas/jamb.ts
 import { gql } from 'graphql-tag';
 
 export const jambTypeDefs = gql`
@@ -18,19 +19,18 @@ export const jambTypeDefs = gql`
     date: DateTime!
   }
 
+  type SubjectQuestions {
+    subject: String!
+    questions: [Question!]!
+  }
+
   type JambExamSession {
     id: Int!
     subjects: [String!]!
-    currentSubject: String
     startTime: DateTime!
     endTime: DateTime
     isCompleted: Boolean!
     scores: [Score!]!
-    remainingTime: String
-  }
-
-  type SubmitResponse {
-    success: Boolean!
     remainingTime: String
   }
 
@@ -48,8 +48,8 @@ export const jambTypeDefs = gql`
   }
 
   type Query {
-    years: [String!]!  # Added this
-    fetchJambSubjectQuestions(sessionId: Int!): [Question!]!
+    years: [String!]!
+    fetchJambSubjectQuestions(sessionId: Int!): [SubjectQuestions!]!
   }
 
   type Mutation {
@@ -58,13 +58,9 @@ export const jambTypeDefs = gql`
       examYear: String!
     ): JambExamSession!
 
-    submitJambAnswer(
-      sessionId: Int!
-      answers: [AnswerInput!]!
-    ): SubmitResponse!
-
     finishJambExam(
       sessionId: Int!
+      answers: [AnswerInput!]!
     ): JambExamResult!
   }
 `;

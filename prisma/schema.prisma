@@ -35,16 +35,26 @@ model Question {
   examType    String
   examSubject String
   examYear    String
+  answers     Answer[] // Added relation to Answer
   @@unique([examYear, id])
 }
 
 model JambExamSession {
   id             Int      @id @default(autoincrement())
-  subjects       String[] // e.g., ["English Language (JAMB)", ...]
-  currentSubject String?
+  subjects       String[] // e.g., ["english language", "mathematics", "physics", "chemistry"]
   examYear       String
   startTime      DateTime @default(now())
   endTime        DateTime?
   isCompleted    Boolean  @default(false)
   scores         Score[]
+  answers        Answer[] // Added relation to Answer
+}
+
+model Answer {
+  id           Int      @id @default(autoincrement())
+  sessionId    Int
+  questionId   String
+  answer       String
+  session      JambExamSession @relation(fields: [sessionId], references: [id])
+  question     Question       @relation(fields: [questionId], references: [id])
 }

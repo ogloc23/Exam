@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.jambTypeDefs = void 0;
+// src/graphql/schemas/jamb.ts
 const graphql_tag_1 = require("graphql-tag");
 exports.jambTypeDefs = (0, graphql_tag_1.gql) `
   scalar DateTime
@@ -20,19 +21,18 @@ exports.jambTypeDefs = (0, graphql_tag_1.gql) `
     date: DateTime!
   }
 
+  type SubjectQuestions {
+    subject: String!
+    questions: [Question!]!
+  }
+
   type JambExamSession {
     id: Int!
     subjects: [String!]!
-    currentSubject: String
     startTime: DateTime!
     endTime: DateTime
     isCompleted: Boolean!
     scores: [Score!]!
-    remainingTime: String
-  }
-
-  type SubmitResponse {
-    success: Boolean!
     remainingTime: String
   }
 
@@ -50,8 +50,8 @@ exports.jambTypeDefs = (0, graphql_tag_1.gql) `
   }
 
   type Query {
-    years: [String!]!  # Added this
-    fetchJambSubjectQuestions(sessionId: Int!): [Question!]!
+    years: [String!]!
+    fetchJambSubjectQuestions(sessionId: Int!): [SubjectQuestions!]!
   }
 
   type Mutation {
@@ -60,13 +60,9 @@ exports.jambTypeDefs = (0, graphql_tag_1.gql) `
       examYear: String!
     ): JambExamSession!
 
-    submitJambAnswer(
-      sessionId: Int!
-      answers: [AnswerInput!]!
-    ): SubmitResponse!
-
     finishJambExam(
       sessionId: Int!
+      answers: [AnswerInput!]!
     ): JambExamResult!
   }
 `;
