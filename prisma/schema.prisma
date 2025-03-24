@@ -12,6 +12,7 @@ model Subject {
   name        String   
   examType    String
   scores      Score[]
+  @@unique([name, examType])
 }
 
 model Score {
@@ -41,7 +42,7 @@ model Question {
 
 model JambExamSession {
   id             Int      @id @default(autoincrement())
-  subjects       String[] // e.g., ["english language", "mathematics", "physics", "chemistry"]
+  subjects       String[]
   examYear       String
   startTime      DateTime @default(now())
   endTime        DateTime?
@@ -56,7 +57,7 @@ model Answer {
   questionId   String
   answer       String
   session      JambExamSession @relation(fields: [sessionId], references: [id])
-  question     Question       @relation(fields: [questionId], references: [id])
+  question     Question        @relation(fields: [questionId], references: [id])
   @@index([sessionId])
   @@index([questionId])
 }

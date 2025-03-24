@@ -20,12 +20,12 @@ export const jambResolvers = {
       if (!YEARS.includes(examYear)) throw new Error(`Invalid year: ${examYear}`);
 
       const validSubjects = ['english language', 'mathematics', 'physics', 'chemistry'];
-      if (!trimmedSubjects.every(sub => validSubjects.includes(sub))) {
-        const invalid = trimmedSubjects.filter(sub => !validSubjects.includes(sub));
-        throw new Error(`Invalid subjects: ${invalid.join(', ')}`);
+      const invalidSubjects = trimmedSubjects.filter(sub => !validSubjects.includes(sub));
+      if (invalidSubjects.length > 0) {
+        throw new Error(`Invalid subjects: ${invalidSubjects.join(', ')}`);
       }
 
-      const session = await prisma.jambExamSession.create({
+      return prisma.jambExamSession.create({
         data: {
           subjects: trimmedSubjects,
           examYear,
@@ -33,8 +33,6 @@ export const jambResolvers = {
           isCompleted: false,
         },
       });
-
-      return session;
     },
 
     finishJambExam: async (_: any, { sessionId, answers }: { sessionId: number; answers: { questionId: string; answer: string }[] }) => {
@@ -45,9 +43,7 @@ export const jambResolvers = {
       if (!session) throw new Error('Session not found');
       if (session.isCompleted) throw new Error('JAMB session already completed');
 
-      const startTime = new Date(session.startTime).getTime();
-      const currentTime = new Date().getTime();
-      const elapsedTime = currentTime - startTime;
+      const elapsedTime = Date.now() - new Date(session.startTime).getTime();
       if (elapsedTime > JAMB_TIME_LIMIT) {
         await autoSubmitJambExam(sessionId);
         const expiredSession = await prisma.jambExamSession.findUnique({
@@ -57,7 +53,15 @@ export const jambResolvers = {
         const totalScore = expiredSession!.scores.reduce((sum, score) => sum + score.score, 0);
         return {
           sessionId,
-          subjectScores: expiredSession!.scores,
+          subjectScores: expiredSession!.scores.map(score => ({
+            id: score.id,
+            examType: score.examType,
+            examSubject: score.examSubject,
+            subjectId: score.subjectId,
+            examYear: score.examYear,
+            score: score.score,
+            date: score.date,
+          })),
           totalScore,
           isCompleted: true,
           timeSpent: 'Time limit exceeded',
@@ -76,7 +80,6 @@ export const jambResolvers = {
 
       if (questions.length !== answers.length) throw new Error('Invalid question IDs');
 
-      // Save answers
       await prisma.answer.createMany({
         data: answers.map(({ questionId, answer }) => ({
           sessionId,
@@ -86,10 +89,28 @@ export const jambResolvers = {
         skipDuplicates: true,
       });
 
+      // Fetch or create Subject records
       const subjectRecords = await prisma.subject.findMany({
         where: { name: { in: allSubjects }, examType: 'jamb' },
       });
-      const subjectMap = new Map(subjectRecords.map(s => [s.name.toLowerCase(), s.id]));
+      let subjectMap = new Map(subjectRecords.map(s => [s.name.toLowerCase(), s.id]));
+
+      const missingSubjects = allSubjects.filter(subject => !subjectMap.has(subject));
+      if (missingSubjects.length > 0) {
+        const newSubjects = await prisma.$transaction(
+          missingSubjects.map(subject =>
+            prisma.subject.upsert({
+              where: { name_examType: { name: subject, examType: 'jamb' } },
+              update: {},
+              create: { name: subject, examType: 'jamb' },
+            })
+          )
+        );
+        if (newSubjects.length !== missingSubjects.length) {
+          throw new Error('Failed to create all missing subjects');
+        }
+        newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
+      }
 
       const subjectScores = allSubjects.map(subject => {
         const subjectQuestions = questions.filter(q => q.examSubject === subject);
@@ -102,7 +123,7 @@ export const jambResolvers = {
         return {
           examType: 'jamb',
           examSubject: subject,
-          subjectId: subjectMap.get(subject)!, // Required field
+          subjectId: subjectMap.get(subject)!,
           examYear: session.examYear,
           score,
           date: new Date(),
@@ -115,13 +136,13 @@ export const jambResolvers = {
         skipDuplicates: true,
       });
 
-      const totalScore = subjectScores.reduce((sum, score) => sum + score.score, 0);
       const updatedSession = await prisma.jambExamSession.update({
         where: { id: sessionId },
         data: { isCompleted: true, endTime: new Date() },
         include: { scores: true },
       });
 
+      const totalScore = subjectScores.reduce((sum, score) => sum + score.score, 0);
       const totalSeconds = Math.floor(elapsedTime / 1000);
       const hours = Math.floor(totalSeconds / 3600);
       const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -129,15 +150,22 @@ export const jambResolvers = {
       let timeSpent = '';
       if (hours > 0) timeSpent += `${hours}hr `;
       if (minutes > 0 || hours > 0) timeSpent += `${minutes}min `;
-      if (seconds > 0 || (hours === 0 && minutes === 0)) timeSpent += `${seconds}s`;
-      timeSpent = timeSpent.trim();
+      timeSpent += `${seconds}s`;
 
       return {
         sessionId,
-        subjectScores: updatedSession.scores,
+        subjectScores: updatedSession.scores.map(score => ({
+          id: score.id,
+          examType: score.examType,
+          examSubject: score.examSubject,
+          subjectId: score.subjectId,
+          examYear: score.examYear,
+          score: score.score,
+          date: score.date,
+        })),
         totalScore,
         isCompleted: updatedSession.isCompleted,
-        timeSpent,
+        timeSpent: timeSpent.trim(),
       };
     },
   },
@@ -145,13 +173,10 @@ export const jambResolvers = {
   JambExamSession: {
     remainingTime: (parent: { startTime: Date; isCompleted: boolean }) => {
       if (parent.isCompleted) return "0s";
-      const startTime = new Date(parent.startTime).getTime();
-      const currentTime = new Date().getTime();
-      const elapsed = currentTime - startTime;
+      const elapsed = Date.now() - new Date(parent.startTime).getTime();
       const remaining = JAMB_TIME_LIMIT - elapsed;
 
-      const totalSeconds = Math.floor(remaining / 1000);
-      if (totalSeconds <= 0) return "0s";
+      const totalSeconds = Math.max(Math.floor(remaining / 1000), 0);
       const hours = Math.floor(totalSeconds / 3600);
       const minutes = Math.floor((totalSeconds % 3600) / 60);
       const seconds = totalSeconds % 60;
@@ -159,7 +184,7 @@ export const jambResolvers = {
       let remainingTimeStr = '';
       if (hours > 0) remainingTimeStr += `${hours}hr `;
       if (minutes > 0 || hours > 0) remainingTimeStr += `${minutes}min `;
-      if (seconds > 0 || (hours === 0 && minutes === 0)) remainingTimeStr += `${seconds}s`;
+      remainingTimeStr += `${seconds}s`;
       return remainingTimeStr.trim();
     },
   },
@@ -181,13 +206,30 @@ async function autoSubmitJambExam(sessionId: number) {
     const subjectRecords = await prisma.subject.findMany({
       where: { name: { in: remainingSubjects }, examType: 'jamb' },
     });
-    const subjectMap = new Map(subjectRecords.map(s => [s.name.toLowerCase(), s.id]));
+    let subjectMap = new Map(subjectRecords.map(s => [s.name.toLowerCase(), s.id]));
+
+    const missingSubjects = remainingSubjects.filter(subject => !subjectMap.has(subject));
+    if (missingSubjects.length > 0) {
+      const newSubjects = await prisma.$transaction(
+        missingSubjects.map(subject =>
+          prisma.subject.upsert({
+            where: { name_examType: { name: subject, examType: 'jamb' } },
+            update: {},
+            create: { name: subject, examType: 'jamb' },
+          })
+        )
+      );
+      if (newSubjects.length !== missingSubjects.length) {
+        throw new Error('Failed to create all missing subjects in auto-submit');
+      }
+      newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
+    }
 
     await prisma.score.createMany({
       data: remainingSubjects.map(subject => ({
         examType: 'jamb',
         examSubject: subject,
-        subjectId: subjectMap.get(subject)!, // Required field
+        subjectId: subjectMap.get(subject)!,
         examYear: session.examYear,
         score: 0,
         date: new Date(),

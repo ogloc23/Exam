@@ -2,24 +2,6 @@
 import { gql } from 'graphql-tag';
 
 export const jambTypeDefs = gql`
-  scalar DateTime
-
-  type Question {
-    id: String!
-    question: String!
-    options: [String!]!
-    answer: String
-  }
-
-  type Score {
-    id: Int!
-    examType: String!
-    examSubject: String!
-    examYear: String!
-    score: Int!
-    date: DateTime!
-  }
-
   type SubjectQuestions {
     subject: String!
     questions: [Question!]!

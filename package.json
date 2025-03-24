@@ -10,7 +10,8 @@
     "seed": "npx ts-node src/seed.ts",
     "prisma:init": "prisma init",
     "prisma:migrate": "prisma migrate dev --name init",
-    "prisma:generate": "prisma generate"
+    "prisma:generate": "prisma generate",
+    "postinstall": "npx prisma generate"  
   },
   "keywords": [],
   "author": "",
