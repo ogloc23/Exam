@@ -20,6 +20,24 @@ const JAMB_TIME_LIMIT = 5400 * 1000; // 90 minutes in milliseconds
 exports.jambResolvers = {
     Query: {
         years: () => YEARS,
+        fetchJambSubjectQuestions: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { sessionId }) {
+            const session = yield prisma.jambExamSession.findUnique({
+                where: { id: sessionId },
+            });
+            if (!session)
+                throw new Error('Session not found');
+            const questions = yield prisma.question.findMany({
+                where: {
+                    examType: 'jamb',
+                    examSubject: { in: session.subjects },
+                    examYear: session.examYear,
+                },
+            });
+            return session.subjects.map(subject => ({
+                subject,
+                questions: questions.filter(q => q.examSubject === subject),
+            }));
+        }),
     },
     Mutation: {
         startJambExam: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { subjects, examYear }) {
@@ -43,6 +61,27 @@ exports.jambResolvers = {
                     isCompleted: false,
                 },
             });
+        }),
+        submitAnswer: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { sessionId, questionId, answer }) {
+            const session = yield prisma.jambExamSession.findUnique({
+                where: { id: sessionId },
+            });
+            if (!session)
+                throw new Error('Session not found');
+            if (session.isCompleted)
+                throw new Error('Session already completed');
+            yield prisma.answer.upsert({
+                where: {
+                    sessionId_questionId: { sessionId, questionId }, // Matches the new unique constraint
+                },
+                update: { answer: answer.toLowerCase() },
+                create: {
+                    sessionId,
+                    questionId,
+                    answer: answer.toLowerCase(),
+                },
+            });
+            return true;
         }),
         finishJambExam: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { sessionId, answers }) {
             const session = yield prisma.jambExamSession.findUnique({
@@ -92,19 +131,15 @@ exports.jambResolvers = {
                     where: { sessionId },
                 });
             }
-            const allSubjects = ['english language', 'mathematics', 'physics', 'chemistry'];
-            let questions = []; // Explicitly type as Question[]
-            if (sessionAnswers.length > 0) {
-                const questionIds = sessionAnswers.map(a => a.questionId);
-                questions = yield prisma.question.findMany({
-                    where: {
-                        examType: 'jamb',
-                        examSubject: { in: allSubjects },
-                        examYear: session.examYear,
-                        id: { in: questionIds },
-                    },
-                });
-            }
+            // Fetch all questions for the session’s subjects
+            const allSubjects = session.subjects;
+            const questions = yield prisma.question.findMany({
+                where: {
+                    examType: 'jamb',
+                    examSubject: { in: allSubjects },
+                    examYear: session.examYear,
+                },
+            });
             // Fetch or create Subject records
             const subjectRecords = yield prisma.subject.findMany({
                 where: { name: { in: allSubjects }, examType: 'jamb' },
@@ -125,7 +160,7 @@ exports.jambResolvers = {
                 const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
                     const question = subjectQuestions.find(q => q.id === questionId);
                     return acc + (question && question.answer.toLowerCase() === answer.toLowerCase() ? 1 : 0);
-                }, 0); // Score is 0 if no answers exist
+                }, 0);
                 return {
                     examType: 'jamb',
                     examSubject: subject,
@@ -208,7 +243,7 @@ function autoSubmitJambExam(sessionId) {
         });
         if (!session || session.isCompleted)
             return;
-        const allSubjects = ['english language', 'mathematics', 'physics', 'chemistry'];
+        const allSubjects = session.subjects;
         const remainingSubjects = allSubjects.filter(subject => !session.scores.some(score => score.examSubject === subject));
         if (remainingSubjects.length > 0) {
             const subjectRecords = yield prisma.subject.findMany({

@@ -10,6 +10,25 @@ const JAMB_TIME_LIMIT = 5400 * 1000; // 90 minutes in milliseconds
 export const jambResolvers = {
   Query: {
     years: () => YEARS,
+    fetchJambSubjectQuestions: async (_: any, { sessionId }: { sessionId: number }) => {
+      const session = await prisma.jambExamSession.findUnique({
+        where: { id: sessionId },
+      });
+      if (!session) throw new Error('Session not found');
+
+      const questions = await prisma.question.findMany({
+        where: {
+          examType: 'jamb',
+          examSubject: { in: session.subjects },
+          examYear: session.examYear,
+        },
+      });
+
+      return session.subjects.map(subject => ({
+        subject,
+        questions: questions.filter(q => q.examSubject === subject),
+      }));
+    },
   },
 
   Mutation: {
@@ -33,6 +52,31 @@ export const jambResolvers = {
           isCompleted: false,
         },
       });
+    },
+
+    submitAnswer: async (
+      _: any,
+      { sessionId, questionId, answer }: { sessionId: number; questionId: string; answer: string }
+    ) => {
+      const session = await prisma.jambExamSession.findUnique({
+        where: { id: sessionId },
+      });
+      if (!session) throw new Error('Session not found');
+      if (session.isCompleted) throw new Error('Session already completed');
+
+      await prisma.answer.upsert({
+        where: {
+          sessionId_questionId: { sessionId, questionId }, // Matches the new unique constraint
+        },
+        update: { answer: answer.toLowerCase() },
+        create: {
+          sessionId,
+          questionId,
+          answer: answer.toLowerCase(),
+        },
+      });
+
+      return true;
     },
 
     finishJambExam: async (
@@ -87,19 +131,15 @@ export const jambResolvers = {
         });
       }
 
-      const allSubjects = ['english language', 'mathematics', 'physics', 'chemistry'];
-      let questions: Question[] = []; // Explicitly type as Question[]
-      if (sessionAnswers.length > 0) {
-        const questionIds = sessionAnswers.map(a => a.questionId);
-        questions = await prisma.question.findMany({
-          where: {
-            examType: 'jamb',
-            examSubject: { in: allSubjects },
-            examYear: session.examYear,
-            id: { in: questionIds },
-          },
-        });
-      }
+      // Fetch all questions for the session’s subjects
+      const allSubjects = session.subjects;
+      const questions: Question[] = await prisma.question.findMany({
+        where: {
+          examType: 'jamb',
+          examSubject: { in: allSubjects },
+          examYear: session.examYear,
+        },
+      });
 
       // Fetch or create Subject records
       const subjectRecords = await prisma.subject.findMany({
@@ -127,7 +167,7 @@ export const jambResolvers = {
         const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
           const question = subjectQuestions.find(q => q.id === questionId);
           return acc + (question && question.answer.toLowerCase() === answer.toLowerCase() ? 1 : 0);
-        }, 0); // Score is 0 if no answers exist
+        }, 0);
 
         return {
           examType: 'jamb',
@@ -217,7 +257,7 @@ async function autoSubmitJambExam(sessionId: number) {
   });
   if (!session || session.isCompleted) return;
 
-  const allSubjects = ['english language', 'mathematics', 'physics', 'chemistry'];
+  const allSubjects = session.subjects;
   const remainingSubjects = allSubjects.filter(
     subject => !session.scores.some(score => score.examSubject === subject)
   );

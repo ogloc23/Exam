@@ -25,6 +25,26 @@ export const jambTypeDefs = gql`
     timeSpent: String!
   }
 
+  type Question {
+    id: String!
+    question: String!
+    options: [String!]!
+    answer: String!
+    examType: String!
+    examSubject: String!
+    examYear: String!
+  }
+
+  type Score {
+    id: Int!
+    examType: String!
+    examSubject: String!
+    subjectId: Int!
+    examYear: String!
+    score: Int!
+    date: DateTime!
+  }
+
   input AnswerInput {
     questionId: String!
     answer: String!
@@ -32,6 +52,7 @@ export const jambTypeDefs = gql`
 
   type Query {
     years: [String!]!
+    fetchJambSubjectQuestions(sessionId: Int!): [SubjectQuestions!]!
   }
 
   type Mutation {
@@ -40,9 +61,15 @@ export const jambTypeDefs = gql`
       examYear: String!
     ): JambExamSession!
 
+    submitAnswer(
+      sessionId: Int!
+      questionId: String!
+      answer: String!
+    ): Boolean!
+
     finishJambExam(
       sessionId: Int!
-      answers: [AnswerInput!] # Changed from [AnswerInput!]! to [AnswerInput!]
+      answers: [AnswerInput!]
     ): JambExamResult!
   }
 `;
