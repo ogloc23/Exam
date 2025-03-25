@@ -64,39 +64,14 @@ export const jambResolvers = {
       });
       if (!session) throw new Error('Session not found');
       if (session.isCompleted) throw new Error('JAMB session already completed');
-
-      const elapsedTime = Date.now() - new Date(session.startTime).getTime();
-      if (elapsedTime > JAMB_TIME_LIMIT) {
-        await autoSubmitJambExam(sessionId);
-        const expiredSession = await prisma.jambExamSession.findUnique({
-          where: { id: sessionId },
-          include: { scores: true },
-        });
-        const totalScore = expiredSession!.scores.reduce((sum, score) => sum + score.score, 0);
-        return {
-          sessionId,
-          subjectScores: expiredSession!.scores.map(score => ({
-            id: score.id,
-            examType: score.examType,
-            examSubject: score.examSubject,
-            subjectId: score.subjectId,
-            examYear: score.examYear,
-            score: score.score,
-            date: score.date,
-          })),
-          totalScore,
-          isCompleted: true,
-          timeSpent: 'Time limit exceeded',
-        };
-      }
-
+    
       let sessionAnswers = session.answers;
       if (answers && answers.length > 0) {
         const validQuestionIds = await prisma.question.findMany({
           where: { examType: 'jamb', examSubject: { in: session.subjects }, examYear: session.examYear },
           select: { id: true },
         }).then(qs => new Set(qs.map(q => q.id)));
-
+    
         const validAnswers = answers.filter(({ questionId }) => validQuestionIds.has(questionId));
         if (validAnswers.length > 0) {
           await prisma.answer.createMany({
@@ -110,17 +85,19 @@ export const jambResolvers = {
           sessionAnswers = await prisma.answer.findMany({ where: { sessionId } });
         }
       }
-
+    
       const allSubjects = session.subjects;
       const questions = await prisma.question.findMany({
         where: { examType: 'jamb', examSubject: { in: allSubjects }, examYear: session.examYear },
       });
-
+    
+      // Define subjectMap
       const subjectRecords = await prisma.subject.findMany({
         where: { name: { in: allSubjects }, examType: 'jamb' },
       });
       let subjectMap = new Map(subjectRecords.map(s => [s.name.toLowerCase(), s.id]));
-
+    
+      // Handle missing subjects
       const missingSubjects = allSubjects.filter(subject => !subjectMap.has(subject));
       if (missingSubjects.length > 0) {
         const newSubjects = await prisma.$transaction(
@@ -134,28 +111,33 @@ export const jambResolvers = {
         );
         newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
       }
-
+    
       const subjectScores = allSubjects.map(subject => {
-        const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 20); // Match the 20 fetched
+        const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 20);
         const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
         console.log(`Subject: ${subject}, Questions: ${subjectQuestions.length}, Answers: ${subjectAnswers.length}`);
         const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
           const question = subjectQuestions.find(q => q.id === questionId);
-          console.log(`Scoring: ${questionId}, Submitted: ${answer}, Correct: ${question?.answer}`);
-          return acc + (question && question.answer === answer ? 1 : 0);
+          if (!question) return acc;
+    
+          // Map submitted letter to full option text
+          const optionIndex = ['a', 'b', 'c', 'd', 'e'].indexOf(answer.toLowerCase());
+          const submittedOptionText = optionIndex !== -1 && question.options[optionIndex] ? question.options[optionIndex] : answer;
+          console.log(`Scoring: ${questionId}, Submitted: ${answer} (${submittedOptionText}), Correct: ${question.answer}`);
+          return acc + (question.answer === submittedOptionText ? 1 : 0);
         }, 0);
         console.log(`Score for ${subject}: ${score}`);
         return {
           examType: 'jamb',
           examSubject: subject,
-          subjectId: subjectMap.get(subject)!,
+          subjectId: subjectMap.get(subject)!, // Now subjectMap is defined
           examYear: session.examYear,
           score,
           date: new Date(),
           jambSessionId: sessionId,
         };
       });
-
+    
       await prisma.$transaction(
         subjectScores.map(score =>
           prisma.score.upsert({
@@ -165,16 +147,15 @@ export const jambResolvers = {
           })
         )
       );
-
+    
       const updatedSession = await prisma.jambExamSession.update({
         where: { id: sessionId },
         data: { isCompleted: true, endTime: new Date() },
         include: { scores: true },
       });
-
+    
       const totalScore = updatedSession.scores.reduce((sum, score) => sum + score.score, 0);
-      console.log(`Total score: ${totalScore}`);
-
+      const elapsedTime = Date.now() - new Date(session.startTime).getTime();
       const totalSeconds = Math.floor(elapsedTime / 1000);
       const hours = Math.floor(totalSeconds / 3600);
       const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -183,17 +164,12 @@ export const jambResolvers = {
       if (hours > 0) timeSpent += `${hours}hr `;
       if (minutes > 0 || hours > 0) timeSpent += `${minutes}min `;
       timeSpent += `${seconds}s`;
-
+    
       return {
         sessionId,
         subjectScores: updatedSession.scores.map(score => ({
-          id: score.id,
-          examType: score.examType,
           examSubject: score.examSubject,
-          subjectId: score.subjectId,
-          examYear: score.examYear,
           score: score.score,
-          date: score.date,
         })),
         totalScore,
         isCompleted: updatedSession.isCompleted,
