@@ -21,7 +21,7 @@ async function fetchExternalQuestions(
   examType: string,
   examSubject: string,
   examYear: string,
-  targetCount: number = 40
+  targetCount: number = 20 // Adjusted to 20
 ): Promise<any[]> {
   const examTypeLower = examType.toLowerCase();
   if (!EXAM_TYPES.includes(examTypeLower)) throw new Error('Invalid exam type');
@@ -128,7 +128,7 @@ export const fetchResolvers = {
           examSubject: dbSubject,
           examYear,
         },
-        take: 20, // Strictly 20 questions
+        take: 20,
       });
 
       if (questions.length < 20) {
@@ -143,32 +143,27 @@ export const fetchResolvers = {
     },
 
     fetchJambSubjectQuestions: async (_: any, { sessionId }: { sessionId: number }) => {
-      const session = await prisma.jambExamSession.findUnique({
-        where: { id: sessionId },
-      });
+      const session = await prisma.jambExamSession.findUnique({ where: { id: sessionId } });
       if (!session) throw new Error(`Session ${sessionId} not found`);
       if (session.isCompleted) throw new Error(`Session ${sessionId} is completed`);
 
       const subjectQuestions = await Promise.all(
         session.subjects.map(async (subject) => {
-          // Fetch exactly 20 local questions
-          const localQuestions = await prisma.question.findMany({
-            where: {
-              examType: 'jamb',
-              examSubject: subject,
-              examYear: session.examYear,
-            },
-            take: 20, // Enforce 20 local questions
-          });
-          console.log(`Fetched ${localQuestions.length} local questions for ${subject}`);
+          // Fetch 20 external questions initially
+          const initialExternalQuestions = await fetchExternalQuestions('jamb', subject, session.examYear, 20);
+          console.log(`Initial external questions for ${subject}: ${initialExternalQuestions.length}`);
 
-          // Fetch exactly 40 external questions
-          const externalQuestions = await fetchExternalQuestions('jamb', subject, session.examYear, 40);
-          console.log(`Fetched ${externalQuestions.length} external questions for ${subject}`);
+          // Fetch another 20 external questions
+          const additionalExternalQuestions = await fetchExternalQuestions('jamb', subject, session.examYear, 20);
+          console.log(`Additional external questions for ${subject}: ${additionalExternalQuestions.length}`);
 
-          // Save external questions to database
+          // Combine all 40 external questions
+          const allExternalQuestions = [...initialExternalQuestions, ...additionalExternalQuestions];
+          console.log(`Total external questions for ${subject}: ${allExternalQuestions.length}`);
+
+          // Save all 40 to database
           await prisma.question.createMany({
-            data: externalQuestions.map(q => ({
+            data: allExternalQuestions.map(q => ({
               id: q.id,
               question: q.question,
               options: q.options,
@@ -180,9 +175,17 @@ export const fetchResolvers = {
             skipDuplicates: true,
           });
 
-          // Combine and limit to 60 total
-          const combinedQuestions = [...localQuestions, ...externalQuestions].slice(0, 60);
-          const shuffledQuestions = combinedQuestions.sort(() => 0.5 - Math.random());
+          // Fetch 20 shuffled questions from the 40 saved
+          const dbQuestions = await prisma.question.findMany({
+            where: {
+              examType: 'jamb',
+              examSubject: subject,
+              examYear: session.examYear,
+            },
+            take: 20,
+          });
+          const shuffledQuestions = dbQuestions.sort(() => 0.5 - Math.random());
+          console.log(`Shuffled questions for ${subject}: ${shuffledQuestions.length}`);
 
           return {
             subject,

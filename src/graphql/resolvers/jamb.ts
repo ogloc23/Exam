@@ -1,4 +1,4 @@
-import { PrismaClient, Question } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 const YEARS = ['2005', '2006', '2007', '2008', '2009', '2010', '2011', 
@@ -47,8 +47,8 @@ export const jambResolvers = {
 
       await prisma.answer.upsert({
         where: { sessionId_questionId: { sessionId, questionId } },
-        update: { answer: answer.toLowerCase() },
-        create: { sessionId, questionId, answer: answer.toLowerCase() },
+        update: { answer },
+        create: { sessionId, questionId, answer },
       });
 
       return true;
@@ -103,7 +103,7 @@ export const jambResolvers = {
             data: validAnswers.map(({ questionId, answer }) => ({
               sessionId,
               questionId,
-              answer: answer.toLowerCase(),
+              answer,
             })),
             skipDuplicates: true,
           });
@@ -136,13 +136,13 @@ export const jambResolvers = {
       }
 
       const subjectScores = allSubjects.map(subject => {
-        const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 60);
+        const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 20); // Match the 20 fetched
         const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
         console.log(`Subject: ${subject}, Questions: ${subjectQuestions.length}, Answers: ${subjectAnswers.length}`);
         const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
           const question = subjectQuestions.find(q => q.id === questionId);
           console.log(`Scoring: ${questionId}, Submitted: ${answer}, Correct: ${question?.answer}`);
-          return acc + (question && question.answer.toLowerCase() === answer.toLowerCase() ? 1 : 0);
+          return acc + (question && question.answer === answer ? 1 : 0);
         }, 0);
         console.log(`Score for ${subject}: ${score}`);
         return {
@@ -257,11 +257,11 @@ async function autoSubmitJambExam(sessionId: number) {
     });
 
     const subjectScores = remainingSubjects.map(subject => {
-      const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 60);
+      const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 20);
       const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
       const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
         const question = subjectQuestions.find(q => q.id === questionId);
-        return acc + (question && question.answer.toLowerCase() === answer.toLowerCase() ? 1 : 0);
+        return acc + (question && question.answer === answer ? 1 : 0);
       }, 0);
 
       return {

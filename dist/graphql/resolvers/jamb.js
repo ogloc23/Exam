@@ -55,8 +55,8 @@ exports.jambResolvers = {
                 throw new Error(`Invalid questionId: ${questionId} not found`);
             yield prisma.answer.upsert({
                 where: { sessionId_questionId: { sessionId, questionId } },
-                update: { answer: answer.toLowerCase() },
-                create: { sessionId, questionId, answer: answer.toLowerCase() },
+                update: { answer },
+                create: { sessionId, questionId, answer },
             });
             return true;
         }),
@@ -105,7 +105,7 @@ exports.jambResolvers = {
                         data: validAnswers.map(({ questionId, answer }) => ({
                             sessionId,
                             questionId,
-                            answer: answer.toLowerCase(),
+                            answer,
                         })),
                         skipDuplicates: true,
                     });
@@ -130,13 +130,13 @@ exports.jambResolvers = {
                 newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
             }
             const subjectScores = allSubjects.map(subject => {
-                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 60);
+                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 20); // Match the 20 fetched
                 const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
                 console.log(`Subject: ${subject}, Questions: ${subjectQuestions.length}, Answers: ${subjectAnswers.length}`);
                 const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
                     const question = subjectQuestions.find(q => q.id === questionId);
                     console.log(`Scoring: ${questionId}, Submitted: ${answer}, Correct: ${question === null || question === void 0 ? void 0 : question.answer}`);
-                    return acc + (question && question.answer.toLowerCase() === answer.toLowerCase() ? 1 : 0);
+                    return acc + (question && question.answer === answer ? 1 : 0);
                 }, 0);
                 console.log(`Score for ${subject}: ${score}`);
                 return {
@@ -238,11 +238,11 @@ function autoSubmitJambExam(sessionId) {
                 where: { examType: 'jamb', examSubject: { in: remainingSubjects }, examYear: session.examYear, id: { in: questionIds } },
             });
             const subjectScores = remainingSubjects.map(subject => {
-                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 60);
+                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 20);
                 const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
                 const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
                     const question = subjectQuestions.find(q => q.id === questionId);
-                    return acc + (question && question.answer.toLowerCase() === answer.toLowerCase() ? 1 : 0);
+                    return acc + (question && question.answer === answer ? 1 : 0);
                 }, 0);
                 return {
                     examType: 'jamb',
