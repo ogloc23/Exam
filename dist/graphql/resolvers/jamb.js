@@ -10,17 +10,15 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.jambResolvers = void 0;
-// src/graphql/resolvers/jamb.ts
 const client_1 = require("@prisma/client");
 const prisma = new client_1.PrismaClient();
 const YEARS = ['2005', '2006', '2007', '2008', '2009', '2010', '2011',
     '2012', '2013', '2014', '2015', '2016', '2017', '2018', '2019',
     '2020', '2021', '2022', '2023'];
-const JAMB_TIME_LIMIT = 5400 * 1000; // 90 minutes in milliseconds
+const JAMB_TIME_LIMIT = 5400 * 1000;
 exports.jambResolvers = {
     Query: {
         years: () => YEARS,
-        // fetchJambSubjectQuestions removed; assume it's imported from fetch.ts in your schema
     },
     Mutation: {
         startJambExam: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { subjects, examYear }) {
@@ -33,10 +31,8 @@ exports.jambResolvers = {
                 throw new Error(`Invalid year: ${examYear}`);
             const validSubjects = ['english language', 'mathematics', 'physics', 'chemistry'];
             const invalidSubjects = trimmedSubjects.filter(sub => !validSubjects.includes(sub));
-            if (invalidSubjects.length > 0) {
+            if (invalidSubjects.length > 0)
                 throw new Error(`Invalid subjects: ${invalidSubjects.join(', ')}`);
-            }
-            console.log('Creating new JambExamSession with subjects:', trimmedSubjects, 'examYear:', examYear);
             const newSession = yield prisma.jambExamSession.create({
                 data: {
                     subjects: trimmedSubjects,
@@ -49,29 +45,18 @@ exports.jambResolvers = {
             return newSession;
         }),
         submitAnswer: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { sessionId, questionId, answer }) {
-            const session = yield prisma.jambExamSession.findUnique({
-                where: { id: sessionId },
-            });
+            const session = yield prisma.jambExamSession.findUnique({ where: { id: sessionId } });
             if (!session)
                 throw new Error('Session not found');
             if (session.isCompleted)
                 throw new Error('Session already completed');
-            // Validate questionId
-            const questionExists = yield prisma.question.findUnique({
-                where: { id: questionId },
-            });
+            const questionExists = yield prisma.question.findUnique({ where: { id: questionId } });
             if (!questionExists)
                 throw new Error(`Invalid questionId: ${questionId} not found`);
             yield prisma.answer.upsert({
-                where: {
-                    sessionId_questionId: { sessionId, questionId },
-                },
+                where: { sessionId_questionId: { sessionId, questionId } },
                 update: { answer: answer.toLowerCase() },
-                create: {
-                    sessionId,
-                    questionId,
-                    answer: answer.toLowerCase(),
-                },
+                create: { sessionId, questionId, answer: answer.toLowerCase() },
             });
             return true;
         }),
@@ -110,22 +95,11 @@ exports.jambResolvers = {
             }
             let sessionAnswers = session.answers;
             if (answers && answers.length > 0) {
-                // Fetch valid question IDs (up to 60 per subject from fetchJambSubjectQuestions)
                 const validQuestionIds = yield prisma.question.findMany({
-                    where: {
-                        examType: 'jamb',
-                        examSubject: { in: session.subjects },
-                        examYear: session.examYear,
-                    },
+                    where: { examType: 'jamb', examSubject: { in: session.subjects }, examYear: session.examYear },
                     select: { id: true },
-                }).then(questions => new Set(questions.map(q => q.id)));
-                const validAnswers = answers.filter(({ questionId }) => {
-                    if (!validQuestionIds.has(questionId)) {
-                        console.warn(`Skipping invalid questionId: ${questionId} for session ${sessionId}`);
-                        return false;
-                    }
-                    return true;
-                });
+                }).then(qs => new Set(qs.map(q => q.id)));
+                const validAnswers = answers.filter(({ questionId }) => validQuestionIds.has(questionId));
                 if (validAnswers.length > 0) {
                     yield prisma.answer.createMany({
                         data: validAnswers.map(({ questionId, answer }) => ({
@@ -135,19 +109,12 @@ exports.jambResolvers = {
                         })),
                         skipDuplicates: true,
                     });
-                    sessionAnswers = yield prisma.answer.findMany({
-                        where: { sessionId },
-                    });
+                    sessionAnswers = yield prisma.answer.findMany({ where: { sessionId } });
                 }
             }
             const allSubjects = session.subjects;
-            // Fetch all questions (up to 60 per subject) to score against
             const questions = yield prisma.question.findMany({
-                where: {
-                    examType: 'jamb',
-                    examSubject: { in: allSubjects },
-                    examYear: session.examYear,
-                },
+                where: { examType: 'jamb', examSubject: { in: allSubjects }, examYear: session.examYear },
             });
             const subjectRecords = yield prisma.subject.findMany({
                 where: { name: { in: allSubjects }, examType: 'jamb' },
@@ -163,12 +130,15 @@ exports.jambResolvers = {
                 newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
             }
             const subjectScores = allSubjects.map(subject => {
-                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 60); // Cap at 60
+                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 60);
                 const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
+                console.log(`Subject: ${subject}, Questions: ${subjectQuestions.length}, Answers: ${subjectAnswers.length}`);
                 const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
                     const question = subjectQuestions.find(q => q.id === questionId);
+                    console.log(`Scoring: ${questionId}, Submitted: ${answer}, Correct: ${question === null || question === void 0 ? void 0 : question.answer}`);
                     return acc + (question && question.answer.toLowerCase() === answer.toLowerCase() ? 1 : 0);
                 }, 0);
+                console.log(`Score for ${subject}: ${score}`);
                 return {
                     examType: 'jamb',
                     examSubject: subject,
@@ -180,12 +150,7 @@ exports.jambResolvers = {
                 };
             });
             yield prisma.$transaction(subjectScores.map(score => prisma.score.upsert({
-                where: {
-                    jambSessionId_examSubject: {
-                        jambSessionId: sessionId,
-                        examSubject: score.examSubject,
-                    },
-                },
+                where: { jambSessionId_examSubject: { jambSessionId: sessionId, examSubject: score.examSubject } },
                 update: { score: score.score },
                 create: score,
             })));
@@ -195,6 +160,7 @@ exports.jambResolvers = {
                 include: { scores: true },
             });
             const totalScore = updatedSession.scores.reduce((sum, score) => sum + score.score, 0);
+            console.log(`Total score: ${totalScore}`);
             const totalSeconds = Math.floor(elapsedTime / 1000);
             const hours = Math.floor(totalSeconds / 3600);
             const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -269,15 +235,10 @@ function autoSubmitJambExam(sessionId) {
             const sessionAnswers = session.answers;
             const questionIds = sessionAnswers.map(a => a.questionId);
             const questions = yield prisma.question.findMany({
-                where: {
-                    examType: 'jamb',
-                    examSubject: { in: remainingSubjects },
-                    examYear: session.examYear,
-                    id: { in: questionIds },
-                },
+                where: { examType: 'jamb', examSubject: { in: remainingSubjects }, examYear: session.examYear, id: { in: questionIds } },
             });
             const subjectScores = remainingSubjects.map(subject => {
-                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 60); // Cap at 60
+                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 60);
                 const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
                 const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
                     const question = subjectQuestions.find(q => q.id === questionId);
