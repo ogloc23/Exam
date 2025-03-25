@@ -16,6 +16,15 @@ const YEARS = ['2005', '2006', '2007', '2008', '2009', '2010', '2011',
     '2012', '2013', '2014', '2015', '2016', '2017', '2018', '2019',
     '2020', '2021', '2022', '2023'];
 const JAMB_TIME_LIMIT = 5400 * 1000;
+// Utility function to shuffle an array (Fisher-Yates shuffle)
+function shuffleArray(array) {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+}
 exports.jambResolvers = {
     Query: {
         years: () => YEARS,
@@ -24,16 +33,26 @@ exports.jambResolvers = {
             if (!session)
                 throw new Error('Session not found');
             const questions = yield prisma.question.findMany({
-                where: { examType: 'jamb', examSubject: { in: session.subjects }, examYear: session.examYear },
+                where: {
+                    examType: 'jamb',
+                    examSubject: { in: session.subjects },
+                    examYear: session.examYear
+                },
             });
-            return session.subjects.map(subject => ({
-                subject,
-                questions: questions.filter(q => q.examSubject === subject).map(q => ({
-                    id: q.id,
-                    question: q.question,
-                    options: q.options,
-                })),
-            }));
+            return session.subjects.map(subject => {
+                // Filter questions for the current subject
+                const subjectQuestions = questions.filter(q => q.examSubject === subject);
+                // Shuffle and take the first 20 (or all if fewer than 20)
+                const shuffledQuestions = shuffleArray(subjectQuestions).slice(0, 20);
+                return {
+                    subject,
+                    questions: shuffledQuestions.map(q => ({
+                        id: q.id,
+                        question: q.question,
+                        options: q.options,
+                    })),
+                };
+            });
         }),
     },
     Mutation: {
@@ -91,7 +110,7 @@ exports.jambResolvers = {
             const sessionAnswers = answers || [];
             console.log(`Received ${sessionAnswers.length} answers for session ${sessionId}`);
             const subjectScores = allSubjects.map(subject => {
-                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 20);
+                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 20); // Already limited to 20 in fetch
                 const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
                 console.log(`Subject: ${subject}, Questions: ${subjectQuestions.length}, Answers: ${subjectAnswers.length}`);
                 const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
@@ -172,60 +191,3 @@ exports.jambResolvers = {
         },
     },
 };
-function autoSubmitJambExam(sessionId) {
-    return __awaiter(this, void 0, void 0, function* () {
-        const session = yield prisma.jambExamSession.findUnique({
-            where: { id: sessionId },
-            include: { scores: true, answers: true },
-        });
-        if (!session || session.isCompleted)
-            return;
-        const allSubjects = session.subjects;
-        const remainingSubjects = allSubjects.filter(subject => !session.scores.some(score => score.examSubject === subject));
-        if (remainingSubjects.length > 0) {
-            const subjectRecords = yield prisma.subject.findMany({
-                where: { name: { in: remainingSubjects }, examType: 'jamb' },
-            });
-            let subjectMap = new Map(subjectRecords.map(s => [s.name.toLowerCase(), s.id]));
-            const missingSubjects = remainingSubjects.filter(subject => !subjectMap.has(subject));
-            if (missingSubjects.length > 0) {
-                const newSubjects = yield prisma.$transaction(missingSubjects.map(subject => prisma.subject.upsert({
-                    where: { name_examType: { name: subject, examType: 'jamb' } },
-                    update: {},
-                    create: { name: subject, examType: 'jamb' },
-                })));
-                newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
-            }
-            const sessionAnswers = session.answers;
-            const questionIds = sessionAnswers.map(a => a.questionId);
-            const questions = yield prisma.question.findMany({
-                where: { examType: 'jamb', examSubject: { in: remainingSubjects }, examYear: session.examYear, id: { in: questionIds } },
-            });
-            const subjectScores = remainingSubjects.map(subject => {
-                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 20);
-                const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
-                const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
-                    const question = subjectQuestions.find(q => q.id === questionId);
-                    return acc + (question && question.answer === answer ? 1 : 0);
-                }, 0);
-                return {
-                    examType: 'jamb',
-                    examSubject: subject,
-                    subjectId: subjectMap.get(subject),
-                    examYear: session.examYear,
-                    score,
-                    date: new Date(),
-                    jambSessionId: sessionId,
-                };
-            });
-            yield prisma.score.createMany({
-                data: subjectScores,
-                skipDuplicates: true,
-            });
-        }
-        yield prisma.jambExamSession.update({
-            where: { id: sessionId },
-            data: { isCompleted: true, endTime: new Date() },
-        });
-    });
-}
