@@ -19,6 +19,22 @@ const JAMB_TIME_LIMIT = 5400 * 1000;
 exports.jambResolvers = {
     Query: {
         years: () => YEARS,
+        fetchJambSubjectQuestions: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { sessionId }) {
+            const session = yield prisma.jambExamSession.findUnique({ where: { id: sessionId } });
+            if (!session)
+                throw new Error('Session not found');
+            const questions = yield prisma.question.findMany({
+                where: { examType: 'jamb', examSubject: { in: session.subjects }, examYear: session.examYear },
+            });
+            return session.subjects.map(subject => ({
+                subject,
+                questions: questions.filter(q => q.examSubject === subject).map(q => ({
+                    id: q.id,
+                    question: q.question,
+                    options: q.options,
+                })),
+            }));
+        }),
     },
     Mutation: {
         startJambExam: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { subjects, examYear }) {
@@ -44,50 +60,14 @@ exports.jambResolvers = {
             console.log('Created session:', newSession);
             return newSession;
         }),
-        submitAnswer: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { sessionId, questionId, answer }) {
-            const session = yield prisma.jambExamSession.findUnique({ where: { id: sessionId } });
-            if (!session)
-                throw new Error('Session not found');
-            if (session.isCompleted)
-                throw new Error('Session already completed');
-            const questionExists = yield prisma.question.findUnique({ where: { id: questionId } });
-            if (!questionExists)
-                throw new Error(`Invalid questionId: ${questionId} not found`);
-            yield prisma.answer.upsert({
-                where: { sessionId_questionId: { sessionId, questionId } },
-                update: { answer },
-                create: { sessionId, questionId, answer },
-            });
-            return true;
-        }),
         finishJambExam: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { sessionId, answers }) {
             const session = yield prisma.jambExamSession.findUnique({
                 where: { id: sessionId },
-                include: { scores: true, answers: true },
             });
             if (!session)
                 throw new Error('Session not found');
             if (session.isCompleted)
                 throw new Error('JAMB session already completed');
-            let sessionAnswers = session.answers;
-            if (answers && answers.length > 0) {
-                const validQuestionIds = yield prisma.question.findMany({
-                    where: { examType: 'jamb', examSubject: { in: session.subjects }, examYear: session.examYear },
-                    select: { id: true },
-                }).then(qs => new Set(qs.map(q => q.id)));
-                const validAnswers = answers.filter(({ questionId }) => validQuestionIds.has(questionId));
-                if (validAnswers.length > 0) {
-                    yield prisma.answer.createMany({
-                        data: validAnswers.map(({ questionId, answer }) => ({
-                            sessionId,
-                            questionId,
-                            answer,
-                        })),
-                        skipDuplicates: true,
-                    });
-                    sessionAnswers = yield prisma.answer.findMany({ where: { sessionId } });
-                }
-            }
             const allSubjects = session.subjects;
             const questions = yield prisma.question.findMany({
                 where: { examType: 'jamb', examSubject: { in: allSubjects }, examYear: session.examYear },
@@ -107,17 +87,23 @@ exports.jambResolvers = {
                 })));
                 newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
             }
+            // Process answers from frontend
+            const sessionAnswers = answers || [];
+            console.log(`Received ${sessionAnswers.length} answers for session ${sessionId}`);
             const subjectScores = allSubjects.map(subject => {
                 const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 20);
                 const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
                 console.log(`Subject: ${subject}, Questions: ${subjectQuestions.length}, Answers: ${subjectAnswers.length}`);
                 const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
                     const question = subjectQuestions.find(q => q.id === questionId);
-                    if (!question)
+                    if (!question) {
+                        console.log(`Question ${questionId} not found in scored set`);
                         return acc;
-                    // Map submitted letter to full option text
+                    }
                     const optionIndex = ['a', 'b', 'c', 'd', 'e'].indexOf(answer.toLowerCase());
-                    const submittedOptionText = optionIndex !== -1 && question.options[optionIndex] ? question.options[optionIndex] : answer;
+                    const submittedOptionText = optionIndex !== -1 && question.options[optionIndex]
+                        ? question.options[optionIndex]
+                        : answer;
                     console.log(`Scoring: ${questionId}, Submitted: ${answer} (${submittedOptionText}), Correct: ${question.answer}`);
                     return acc + (question.answer === submittedOptionText ? 1 : 0);
                 }, 0);
@@ -125,7 +111,7 @@ exports.jambResolvers = {
                 return {
                     examType: 'jamb',
                     examSubject: subject,
-                    subjectId: subjectMap.get(subject), // Now subjectMap is defined
+                    subjectId: subjectMap.get(subject),
                     examYear: session.examYear,
                     score,
                     date: new Date(),
