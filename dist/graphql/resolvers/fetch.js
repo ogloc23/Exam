@@ -29,153 +29,91 @@ const apiClient = axios_1.default.create({
         'Accept': 'application/json',
     },
 });
+function fetchExternalQuestions(examType_1, examSubject_1, examYear_1) {
+    return __awaiter(this, arguments, void 0, function* (examType, examSubject, examYear, targetCount = 40) {
+        var _a, _b;
+        const examTypeLower = examType.toLowerCase();
+        if (!EXAM_TYPES.includes(examTypeLower)) {
+            throw new Error('Invalid exam type. Supported types: "jamb", "waec", "neco"');
+        }
+        if (!YEARS.includes(examYear)) {
+            throw new Error(`Invalid year. Supported years: ${YEARS.join(', ')}`);
+        }
+        const apiSubject = examSubject === 'english language' ? 'english' : examSubject;
+        const dbSubject = examSubject.toLowerCase();
+        let allQuestions = [];
+        const seenIds = new Set();
+        const batchSize = 20;
+        const maxAttemptsPerBatch = 10;
+        const batchesNeeded = Math.ceil(targetCount / batchSize);
+        for (let batch = 0; batch < batchesNeeded && allQuestions.length < targetCount; batch++) {
+            const batchQuestions = [];
+            let consecutiveDuplicates = 0;
+            const duplicateThreshold = 5;
+            for (let i = 0; i < maxAttemptsPerBatch && consecutiveDuplicates < duplicateThreshold && batchQuestions.length < batchSize && allQuestions.length < targetCount; i++) {
+                try {
+                    const response = yield apiClient.get('/q', {
+                        params: {
+                            subject: apiSubject,
+                            year: examYear,
+                            type: examTypeLower === 'jamb' ? 'utme' : examTypeLower,
+                        },
+                    });
+                    const questionData = response.data.data && !Array.isArray(response.data.data)
+                        ? [response.data.data]
+                        : response.data.data || [];
+                    if (!questionData.length || !((_a = questionData[0]) === null || _a === void 0 ? void 0 : _a.id) || !((_b = questionData[0]) === null || _b === void 0 ? void 0 : _b.answer)) {
+                        console.warn(`Skipping invalid question on attempt ${i}:`, questionData);
+                        consecutiveDuplicates++;
+                        continue;
+                    }
+                    const question = questionData[0];
+                    const questionId = `${examYear}-${question.id}`;
+                    if (seenIds.has(questionId)) {
+                        consecutiveDuplicates++;
+                        continue;
+                    }
+                    const options = Object.values(question.option || {})
+                        .filter((opt) => typeof opt === 'string' && opt !== '')
+                        .map(opt => opt);
+                    if (options.length < 2) {
+                        consecutiveDuplicates++;
+                        continue;
+                    }
+                    const answerIndex = ['a', 'b', 'c', 'd'].indexOf(String(question.answer).toLowerCase());
+                    const answerText = answerIndex !== -1 ? options[answerIndex] : question.answer;
+                    const formattedQuestion = {
+                        id: questionId,
+                        question: question.question || 'No question text provided',
+                        options,
+                        answer: answerText,
+                        examType: examTypeLower,
+                        examSubject: dbSubject,
+                        examYear,
+                    };
+                    batchQuestions.push(formattedQuestion);
+                    seenIds.add(questionId);
+                    consecutiveDuplicates = 0;
+                }
+                catch (apiError) {
+                    console.error(`API call failed on attempt ${i}:`, apiError.message);
+                    consecutiveDuplicates++;
+                }
+            }
+            allQuestions = allQuestions.concat(batchQuestions);
+        }
+        // Slice to exact target count
+        return allQuestions.slice(0, targetCount);
+    });
+}
 exports.fetchResolvers = {
     Query: {
         fetchExternalQuestions: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { examType, examSubject, examYear, offset = 0 }) {
-            var _b, _c, _d, _e;
-            const examTypeLower = examType.toLowerCase();
-            if (!EXAM_TYPES.includes(examTypeLower)) {
-                throw new Error('Invalid exam type. Supported types: "jamb", "waec", "neco"');
-            }
-            if (!YEARS.includes(examYear)) {
-                throw new Error(`Invalid year. Supported years: ${YEARS.join(', ')}`);
-            }
-            const dbSubject = examSubject.toLowerCase();
-            const apiSubject = dbSubject === 'english language' ? 'english' : dbSubject;
-            let subject = yield prisma.subject.findFirst({
-                where: {
-                    name: { equals: examSubject, mode: 'insensitive' },
-                    examType: examTypeLower,
-                },
-            });
-            if (!subject) {
-                console.log(`Subject "${examSubject}" not found for "${examTypeLower}", creating it.`);
-                subject = yield prisma.subject.upsert({
-                    where: { name_examType: { name: examSubject, examType: examTypeLower } },
-                    update: {},
-                    create: { name: examSubject, examType: examTypeLower },
-                });
-            }
-            const dbSubjectStored = subject.name.toLowerCase();
-            let allQuestions = yield prisma.question.findMany({
-                where: { examType: examTypeLower, examSubject: dbSubjectStored, examYear },
-            });
-            const totalQuestionsTarget = 40;
-            if (allQuestions.length < totalQuestionsTarget) {
-                const seenIds = new Set(allQuestions.map(q => q.id));
-                const batchSize = 20;
-                const maxAttemptsPerBatch = 10;
-                const batchesNeeded = Math.ceil((totalQuestionsTarget - allQuestions.length) / batchSize);
-                for (let batch = 0; batch < batchesNeeded && allQuestions.length < totalQuestionsTarget; batch++) {
-                    const batchQuestions = [];
-                    let consecutiveDuplicates = 0;
-                    const duplicateThreshold = 5;
-                    for (let i = 0; i < maxAttemptsPerBatch && consecutiveDuplicates < duplicateThreshold && batchQuestions.length < batchSize && allQuestions.length < totalQuestionsTarget; i++) {
-                        try {
-                            const response = yield apiClient.get('/q', {
-                                params: {
-                                    subject: apiSubject,
-                                    year: examYear,
-                                    type: examTypeLower === 'jamb' ? 'utme' : examTypeLower,
-                                },
-                            });
-                            console.log(`API Response for ${dbSubjectStored} (attempt ${i}, batch ${batch + 1}):`, response.data);
-                            const questionData = response.data.data && !Array.isArray(response.data.data)
-                                ? [response.data.data]
-                                : response.data.data || [];
-                            if (!questionData.length || !((_b = questionData[0]) === null || _b === void 0 ? void 0 : _b.id) || !((_c = questionData[0]) === null || _c === void 0 ? void 0 : _c.answer)) {
-                                console.warn(`Skipping invalid question on attempt ${i}:`, questionData);
-                                consecutiveDuplicates++;
-                                continue;
-                            }
-                            const question = questionData[0];
-                            const questionId = `${examYear}-${question.id}`;
-                            if (seenIds.has(questionId)) {
-                                console.log(`Duplicate found: ${questionId}`);
-                                consecutiveDuplicates++;
-                                continue;
-                            }
-                            const options = Object.values(question.option || {})
-                                .filter((opt) => typeof opt === 'string' && opt !== '')
-                                .map(opt => opt);
-                            if (options.length < 2) {
-                                console.warn(`Skipping ${questionId}: insufficient options (${options.length})`);
-                                consecutiveDuplicates++;
-                                continue;
-                            }
-                            const answerIndex = ['a', 'b', 'c', 'd'].indexOf(String(question.answer).toLowerCase());
-                            const answerText = answerIndex !== -1 ? options[answerIndex] : question.answer;
-                            const formattedQuestion = {
-                                id: questionId,
-                                question: question.question || 'No question text provided',
-                                options,
-                                answer: answerText,
-                                examType: examTypeLower,
-                                examSubject: dbSubjectStored,
-                                examYear,
-                            };
-                            batchQuestions.push(formattedQuestion);
-                            seenIds.add(questionId);
-                            consecutiveDuplicates = 0;
-                        }
-                        catch (apiError) {
-                            console.error(`API call failed on attempt ${i}:`, {
-                                message: apiError.message,
-                                response: (_d = apiError.response) === null || _d === void 0 ? void 0 : _d.data,
-                                status: (_e = apiError.response) === null || _e === void 0 ? void 0 : _e.status,
-                            });
-                            consecutiveDuplicates++;
-                            continue;
-                        }
-                    }
-                    if (batchQuestions.length > 0) {
-                        yield prisma.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-                            yield tx.question.createMany({
-                                data: batchQuestions,
-                                skipDuplicates: true,
-                            });
-                            allQuestions = yield tx.question.findMany({
-                                where: { examType: examTypeLower, examSubject: dbSubjectStored, examYear },
-                            });
-                        }), { maxWait: 10000, timeout: 20000 });
-                        console.log(`Batch ${batch + 1} completed. Total questions: ${allQuestions.length}`);
-                    }
-                }
-                if (allQuestions.length < totalQuestionsTarget) {
-                    const needed = totalQuestionsTarget - allQuestions.length;
-                    console.log(`Adding ${needed} mock questions for ${dbSubjectStored}`);
-                    const mockQuestions = Array.from({ length: needed }, (_, i) => ({
-                        id: `${examYear}-mock-${i + 1 + allQuestions.length}`,
-                        question: `Mock ${dbSubjectStored} question ${i + 1 + allQuestions.length}`,
-                        options: ['a', 'b', 'c', 'd'],
-                        answer: 'a',
-                        examType: examTypeLower,
-                        examSubject: dbSubjectStored,
-                        examYear,
-                    }));
-                    yield prisma.$transaction((tx) => __awaiter(void 0, void 0, void 0, function* () {
-                        yield tx.question.createMany({
-                            data: mockQuestions,
-                            skipDuplicates: true,
-                        });
-                        allQuestions = yield tx.question.findMany({
-                            where: { examType: examTypeLower, examSubject: dbSubjectStored, examYear },
-                        });
-                    }), { maxWait: 10000, timeout: 20000 });
-                }
-            }
-            console.log(`Fetched and saved ${allQuestions.length} questions for ${dbSubjectStored} ${examYear}`);
-            // Shuffle and slice based on offset
-            const shuffledQuestions = allQuestions.sort(() => 0.5 - Math.random());
+            const questions = yield fetchExternalQuestions(examType, examSubject, examYear);
             const batchSize = 20;
             const startIndex = offset * batchSize;
             const endIndex = startIndex + batchSize;
-            // Log the next batch to simulate "automatic" fetch
-            if (startIndex === 0 && allQuestions.length > batchSize) {
-                const nextBatch = shuffledQuestions.slice(batchSize, 2 * batchSize);
-                console.log(`Next batch of 20 questions prepared (offset 1):`, nextBatch);
-            }
-            const result = shuffledQuestions.slice(startIndex, endIndex);
+            const result = questions.slice(startIndex, endIndex);
             if (result.length === 0) {
                 throw new Error(`No more questions available at offset ${offset}`);
             }
@@ -204,13 +142,13 @@ exports.fetchResolvers = {
                     examSubject: dbSubject,
                     examYear,
                 },
+                take: 20, // Limit to 20 questions
             });
-            const totalQuestionsToReturn = 20;
-            if (questions.length < totalQuestionsToReturn) {
-                throw new Error(`Insufficient questions in database: got ${questions.length}, need ${totalQuestionsToReturn}`);
+            if (questions.length < 20) {
+                throw new Error(`Insufficient questions in database: got ${questions.length}, need 20`);
             }
             const shuffledQuestions = questions.sort(() => 0.5 - Math.random());
-            return shuffledQuestions.slice(0, totalQuestionsToReturn).map(q => ({
+            return shuffledQuestions.map(q => ({
                 id: q.id,
                 question: q.question,
                 options: q.options,
@@ -227,27 +165,28 @@ exports.fetchResolvers = {
                 throw new Error(`Session ${sessionId} is already completed`);
             }
             const allSubjects = ['english language', 'mathematics', 'physics', 'chemistry'];
-            // Verify session subjects match expected
             const invalidSubjects = session.subjects.filter(sub => !allSubjects.includes(sub.toLowerCase()));
             if (invalidSubjects.length > 0) {
                 throw new Error(`Session contains invalid subjects: ${invalidSubjects.join(', ')}`);
             }
-            const subjectQuestions = yield Promise.all(allSubjects.map((subject) => __awaiter(void 0, void 0, void 0, function* () {
-                const questions = yield prisma.question.findMany({
+            const subjectQuestions = yield Promise.all(session.subjects.map((subject) => __awaiter(void 0, void 0, void 0, function* () {
+                // Fetch 20 questions from local database
+                const localQuestions = yield prisma.question.findMany({
                     where: {
                         examType: 'jamb',
                         examSubject: subject,
                         examYear: session.examYear,
                     },
+                    take: 20, // Limit to 20 local questions
                 });
-                const totalQuestionsToReturn = 20;
-                if (questions.length < totalQuestionsToReturn) {
-                    throw new Error(`Insufficient questions for ${subject}: got ${questions.length}, need ${totalQuestionsToReturn}`);
-                }
-                const shuffledQuestions = questions.sort(() => 0.5 - Math.random());
+                // Fetch 40 questions from external API
+                const externalQuestions = yield fetchExternalQuestions('jamb', subject, session.examYear, 40);
+                // Combine and shuffle
+                const combinedQuestions = [...localQuestions, ...externalQuestions];
+                const shuffledQuestions = combinedQuestions.sort(() => 0.5 - Math.random());
                 return {
                     subject,
-                    questions: shuffledQuestions.slice(0, totalQuestionsToReturn).map(q => ({
+                    questions: shuffledQuestions.map(q => ({
                         id: q.id,
                         question: q.question,
                         options: q.options,

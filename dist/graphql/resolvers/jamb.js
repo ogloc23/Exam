@@ -20,24 +20,7 @@ const JAMB_TIME_LIMIT = 5400 * 1000; // 90 minutes in milliseconds
 exports.jambResolvers = {
     Query: {
         years: () => YEARS,
-        fetchJambSubjectQuestions: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { sessionId }) {
-            const session = yield prisma.jambExamSession.findUnique({
-                where: { id: sessionId },
-            });
-            if (!session)
-                throw new Error('Session not found');
-            const questions = yield prisma.question.findMany({
-                where: {
-                    examType: 'jamb',
-                    examSubject: { in: session.subjects },
-                    examYear: session.examYear,
-                },
-            });
-            return session.subjects.map(subject => ({
-                subject,
-                questions: questions.filter(q => q.examSubject === subject),
-            }));
-        }),
+        // fetchJambSubjectQuestions removed; assume it's imported from fetch.ts in your schema
     },
     Mutation: {
         startJambExam: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { subjects, examYear }) {
@@ -53,7 +36,8 @@ exports.jambResolvers = {
             if (invalidSubjects.length > 0) {
                 throw new Error(`Invalid subjects: ${invalidSubjects.join(', ')}`);
             }
-            return prisma.jambExamSession.create({
+            console.log('Creating new JambExamSession with subjects:', trimmedSubjects, 'examYear:', examYear);
+            const newSession = yield prisma.jambExamSession.create({
                 data: {
                     subjects: trimmedSubjects,
                     examYear,
@@ -61,6 +45,8 @@ exports.jambResolvers = {
                     isCompleted: false,
                 },
             });
+            console.log('Created session:', newSession);
+            return newSession;
         }),
         submitAnswer: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { sessionId, questionId, answer }) {
             const session = yield prisma.jambExamSession.findUnique({
@@ -70,9 +56,15 @@ exports.jambResolvers = {
                 throw new Error('Session not found');
             if (session.isCompleted)
                 throw new Error('Session already completed');
+            // Validate questionId
+            const questionExists = yield prisma.question.findUnique({
+                where: { id: questionId },
+            });
+            if (!questionExists)
+                throw new Error(`Invalid questionId: ${questionId} not found`);
             yield prisma.answer.upsert({
                 where: {
-                    sessionId_questionId: { sessionId, questionId }, // Matches the new unique constraint
+                    sessionId_questionId: { sessionId, questionId },
                 },
                 update: { answer: answer.toLowerCase() },
                 create: {
@@ -116,23 +108,40 @@ exports.jambResolvers = {
                     timeSpent: 'Time limit exceeded',
                 };
             }
-            // Use provided answers or existing ones
             let sessionAnswers = session.answers;
             if (answers && answers.length > 0) {
-                yield prisma.answer.createMany({
-                    data: answers.map(({ questionId, answer }) => ({
-                        sessionId,
-                        questionId,
-                        answer: answer.toLowerCase(),
-                    })),
-                    skipDuplicates: true,
+                // Fetch valid question IDs (up to 60 per subject from fetchJambSubjectQuestions)
+                const validQuestionIds = yield prisma.question.findMany({
+                    where: {
+                        examType: 'jamb',
+                        examSubject: { in: session.subjects },
+                        examYear: session.examYear,
+                    },
+                    select: { id: true },
+                }).then(questions => new Set(questions.map(q => q.id)));
+                const validAnswers = answers.filter(({ questionId }) => {
+                    if (!validQuestionIds.has(questionId)) {
+                        console.warn(`Skipping invalid questionId: ${questionId} for session ${sessionId}`);
+                        return false;
+                    }
+                    return true;
                 });
-                sessionAnswers = yield prisma.answer.findMany({
-                    where: { sessionId },
-                });
+                if (validAnswers.length > 0) {
+                    yield prisma.answer.createMany({
+                        data: validAnswers.map(({ questionId, answer }) => ({
+                            sessionId,
+                            questionId,
+                            answer: answer.toLowerCase(),
+                        })),
+                        skipDuplicates: true,
+                    });
+                    sessionAnswers = yield prisma.answer.findMany({
+                        where: { sessionId },
+                    });
+                }
             }
-            // Fetch all questions for the session’s subjects
             const allSubjects = session.subjects;
+            // Fetch all questions (up to 60 per subject) to score against
             const questions = yield prisma.question.findMany({
                 where: {
                     examType: 'jamb',
@@ -140,7 +149,6 @@ exports.jambResolvers = {
                     examYear: session.examYear,
                 },
             });
-            // Fetch or create Subject records
             const subjectRecords = yield prisma.subject.findMany({
                 where: { name: { in: allSubjects }, examType: 'jamb' },
             });
@@ -155,7 +163,7 @@ exports.jambResolvers = {
                 newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
             }
             const subjectScores = allSubjects.map(subject => {
-                const subjectQuestions = questions.filter(q => q.examSubject === subject);
+                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 60); // Cap at 60
                 const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
                 const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
                     const question = subjectQuestions.find(q => q.id === questionId);
@@ -171,7 +179,6 @@ exports.jambResolvers = {
                     jambSessionId: sessionId,
                 };
             });
-            // Upsert scores with the new unique constraint
             yield prisma.$transaction(subjectScores.map(score => prisma.score.upsert({
                 where: {
                     jambSessionId_examSubject: {
@@ -270,7 +277,7 @@ function autoSubmitJambExam(sessionId) {
                 },
             });
             const subjectScores = remainingSubjects.map(subject => {
-                const subjectQuestions = questions.filter(q => q.examSubject === subject);
+                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 60); // Cap at 60
                 const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
                 const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
                     const question = subjectQuestions.find(q => q.id === questionId);

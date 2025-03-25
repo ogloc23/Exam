@@ -10,25 +10,7 @@ const JAMB_TIME_LIMIT = 5400 * 1000; // 90 minutes in milliseconds
 export const jambResolvers = {
   Query: {
     years: () => YEARS,
-    fetchJambSubjectQuestions: async (_: any, { sessionId }: { sessionId: number }) => {
-      const session = await prisma.jambExamSession.findUnique({
-        where: { id: sessionId },
-      });
-      if (!session) throw new Error('Session not found');
-
-      const questions = await prisma.question.findMany({
-        where: {
-          examType: 'jamb',
-          examSubject: { in: session.subjects },
-          examYear: session.examYear,
-        },
-      });
-
-      return session.subjects.map(subject => ({
-        subject,
-        questions: questions.filter(q => q.examSubject === subject),
-      }));
-    },
+    // fetchJambSubjectQuestions removed; assume it's imported from fetch.ts in your schema
   },
 
   Mutation: {
@@ -44,7 +26,8 @@ export const jambResolvers = {
         throw new Error(`Invalid subjects: ${invalidSubjects.join(', ')}`);
       }
 
-      return prisma.jambExamSession.create({
+      console.log('Creating new JambExamSession with subjects:', trimmedSubjects, 'examYear:', examYear);
+      const newSession = await prisma.jambExamSession.create({
         data: {
           subjects: trimmedSubjects,
           examYear,
@@ -52,6 +35,8 @@ export const jambResolvers = {
           isCompleted: false,
         },
       });
+      console.log('Created session:', newSession);
+      return newSession;
     },
 
     submitAnswer: async (
@@ -64,9 +49,15 @@ export const jambResolvers = {
       if (!session) throw new Error('Session not found');
       if (session.isCompleted) throw new Error('Session already completed');
 
+      // Validate questionId
+      const questionExists = await prisma.question.findUnique({
+        where: { id: questionId },
+      });
+      if (!questionExists) throw new Error(`Invalid questionId: ${questionId} not found`);
+
       await prisma.answer.upsert({
         where: {
-          sessionId_questionId: { sessionId, questionId }, // Matches the new unique constraint
+          sessionId_questionId: { sessionId, questionId },
         },
         update: { answer: answer.toLowerCase() },
         create: {
@@ -115,25 +106,44 @@ export const jambResolvers = {
         };
       }
 
-      // Use provided answers or existing ones
       let sessionAnswers = session.answers;
       if (answers && answers.length > 0) {
-        await prisma.answer.createMany({
-          data: answers.map(({ questionId, answer }) => ({
-            sessionId,
-            questionId,
-            answer: answer.toLowerCase(),
-          })),
-          skipDuplicates: true,
+        // Fetch valid question IDs (up to 60 per subject from fetchJambSubjectQuestions)
+        const validQuestionIds = await prisma.question.findMany({
+          where: {
+            examType: 'jamb',
+            examSubject: { in: session.subjects },
+            examYear: session.examYear,
+          },
+          select: { id: true },
+        }).then(questions => new Set(questions.map(q => q.id)));
+
+        const validAnswers = answers.filter(({ questionId }) => {
+          if (!validQuestionIds.has(questionId)) {
+            console.warn(`Skipping invalid questionId: ${questionId} for session ${sessionId}`);
+            return false;
+          }
+          return true;
         });
-        sessionAnswers = await prisma.answer.findMany({
-          where: { sessionId },
-        });
+
+        if (validAnswers.length > 0) {
+          await prisma.answer.createMany({
+            data: validAnswers.map(({ questionId, answer }) => ({
+              sessionId,
+              questionId,
+              answer: answer.toLowerCase(),
+            })),
+            skipDuplicates: true,
+          });
+          sessionAnswers = await prisma.answer.findMany({
+            where: { sessionId },
+          });
+        }
       }
 
-      // Fetch all questions for the session’s subjects
       const allSubjects = session.subjects;
-      const questions: Question[] = await prisma.question.findMany({
+      // Fetch all questions (up to 60 per subject) to score against
+      const questions = await prisma.question.findMany({
         where: {
           examType: 'jamb',
           examSubject: { in: allSubjects },
@@ -141,7 +151,6 @@ export const jambResolvers = {
         },
       });
 
-      // Fetch or create Subject records
       const subjectRecords = await prisma.subject.findMany({
         where: { name: { in: allSubjects }, examType: 'jamb' },
       });
@@ -162,7 +171,7 @@ export const jambResolvers = {
       }
 
       const subjectScores = allSubjects.map(subject => {
-        const subjectQuestions = questions.filter(q => q.examSubject === subject);
+        const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 60); // Cap at 60
         const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
         const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
           const question = subjectQuestions.find(q => q.id === questionId);
@@ -180,7 +189,6 @@ export const jambResolvers = {
         };
       });
 
-      // Upsert scores with the new unique constraint
       await prisma.$transaction(
         subjectScores.map(score =>
           prisma.score.upsert({
@@ -294,7 +302,7 @@ async function autoSubmitJambExam(sessionId: number) {
     });
 
     const subjectScores = remainingSubjects.map(subject => {
-      const subjectQuestions = questions.filter(q => q.examSubject === subject);
+      const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 60); // Cap at 60
       const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
       const score = subjectAnswers.reduce((acc, { questionId, answer }) => {
         const question = subjectQuestions.find(q => q.id === questionId);
