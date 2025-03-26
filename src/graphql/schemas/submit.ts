@@ -1,3 +1,4 @@
+// src/graphql/schemas/submit.ts
 import { gql } from 'graphql-tag';
 
 export const submitTypeDefs = gql`
@@ -11,7 +12,7 @@ export const submitTypeDefs = gql`
     id: String!
     question: String!
     options: [String!]!
-    answer: String!
+    answer: String # Changed from String! to String
     questionOption: QuestionOption
   }
 

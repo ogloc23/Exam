@@ -7,23 +7,37 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Student {
+  id           Int               @id @default(autoincrement())
+  firstName    String
+  lastName     String
+  userName     String            @unique
+  email        String            @unique // Fixed: Removed invalid "d for science/art"
+  createdAt    DateTime          @default(now())
+  phoneNumber  String
+  password     String
+  studentType  String?           // Optional field (Science or Art)
+  updatedAt    DateTime          @updatedAt
+  examSessions JambExamSession[] // Link to exam sessions
+}
+
 model Subject {
-  id          Int      @id @default(autoincrement())
-  name        String   
-  examType    String
-  scores      Score[]
+  id       Int     @id @default(autoincrement())
+  name     String
+  examType String
+  scores   Score[]
   @@unique([name, examType])
 }
 
 model Score {
-  id            Int             @id @default(autoincrement())
+  id            Int              @id @default(autoincrement())
   examType      String
   examSubject   String
   subjectId     Int
   examYear      String
   score         Int
-  date          DateTime        @default(now())
-  subject       Subject         @relation(fields: [subjectId], references: [id])
+  date          DateTime         @default(now())
+  subject       Subject          @relation(fields: [subjectId], references: [id])
   jambSession   JambExamSession? @relation(fields: [jambSessionId], references: [id])
   jambSessionId Int?
   @@unique([jambSessionId, examSubject])
@@ -42,24 +56,26 @@ model Question {
 }
 
 model JambExamSession {
-  id             Int      @id @default(autoincrement())
-  subjects       String[]
-  examYear       String
-  startTime      DateTime @default(now())
-  endTime        DateTime?
-  isCompleted    Boolean  @default(false)
-  scores         Score[]
-  answers        Answer[]
+  id          Int      @id @default(autoincrement())
+  subjects    String[]
+  examYear    String
+  startTime   DateTime @default(now())
+  endTime     DateTime?
+  isCompleted Boolean  @default(false)
+  scores      Score[]
+  answers     Answer[]
+  studentId   Int      // Foreign key to Student
+  student     Student  @relation(fields: [studentId], references: [id])
 }
 
 model Answer {
-  id           Int      @id @default(autoincrement())
-  sessionId    Int
-  questionId   String
-  answer       String
-  session      JambExamSession @relation(fields: [sessionId], references: [id])
-  question     Question        @relation(fields: [questionId], references: [id])
+  id         Int      @id @default(autoincrement())
+  sessionId  Int
+  questionId String
+  answer     String
+  session    JambExamSession @relation(fields: [sessionId], references: [id])
+  question   Question        @relation(fields: [questionId], references: [id])
   @@index([sessionId])
   @@index([questionId])
-  @@unique([sessionId, questionId]) // Added this
+  @@unique([sessionId, questionId])
 }

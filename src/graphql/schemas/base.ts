@@ -18,6 +18,6 @@ export const baseTypeDefs = gql`
     id: String!
     question: String!
     options: [String!]!
-    answer: String
+    answer: String # Nullable
   }
 `;

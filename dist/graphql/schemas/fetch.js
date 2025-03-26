@@ -8,7 +8,7 @@ exports.fetchTypeDefs = (0, graphql_tag_1.gql) `
     id: String!
     question: String!
     options: [String!]!
-    answer: String # Optional, present only for fetchExternalQuestions
+    answer: String # Optional, included only in fetchExternalQuestions response
   }
 
   type SubjectQuestions {

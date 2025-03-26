@@ -16,9 +16,8 @@ require("dotenv/config");
 const express_1 = __importDefault(require("express"));
 const apollo_server_express_1 = require("apollo-server-express");
 const cors_1 = __importDefault(require("cors"));
-const merge_1 = require("./graphql/merge"); // Adjusted path case to match your merge file
+const merge_1 = require("./graphql/merge"); // Use merged file
 const app = (0, express_1.default)();
-// Enable CORS
 app.use((0, cors_1.default)({
     origin: '*',
     credentials: true,
@@ -26,20 +25,26 @@ app.use((0, cors_1.default)({
 const server = new apollo_server_express_1.ApolloServer({
     typeDefs: merge_1.typeDefs,
     resolvers: merge_1.resolvers,
-    context: ({ req }) => ({
-    // Add authentication context here if needed
-    }),
+    context: ({ req }) => {
+        var _a;
+        return ({
+            token: (_a = req.headers.authorization) === null || _a === void 0 ? void 0 : _a.replace('Bearer ', ''),
+        });
+    },
 });
 function startServer() {
     return __awaiter(this, void 0, void 0, function* () {
-        yield server.start();
-        server.applyMiddleware({ app: app }); // Type assertion to bypass mismatch
-        const PORT = process.env.PORT || 4000;
-        app.listen(PORT, () => {
-            console.log(`Server running at http://localhost:${PORT}${server.graphqlPath}`);
-        });
+        try {
+            yield server.start();
+            server.applyMiddleware({ app: app });
+            const PORT = process.env.PORT || 4000;
+            app.listen(PORT, () => {
+                console.log(`Server running at http://localhost:${PORT}${server.graphqlPath}`);
+            });
+        }
+        catch (error) {
+            console.error('Server failed to start:', error);
+        }
     });
 }
-startServer().catch((error) => {
-    console.error('Server failed to start:', error);
-});
+startServer();

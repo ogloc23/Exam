@@ -2,6 +2,25 @@
 import { gql } from 'graphql-tag';
 
 export const jambTypeDefs = gql`
+  type Student {
+    id: Int!
+    firstName: String!
+    lastName: String!
+    userName: String!
+    email: String!
+    phoneNumber: String!
+    studentType: String
+    createdAt: String!
+    updatedAt: String!
+  }
+
+  type LoginResponse {
+    success: Boolean!
+    message: String!
+    token: String!
+    student: Student!
+  }
+
   type SubjectQuestions {
     subject: String!
     questions: [Question!]!
@@ -10,16 +29,21 @@ export const jambTypeDefs = gql`
   type JambExamSession {
     id: Int!
     subjects: [String!]!
-    startTime: DateTime!
-    endTime: DateTime
+    startTime: String!
+    endTime: String
     isCompleted: Boolean!
     scores: [Score!]!
     remainingTime: String!
   }
 
+  type SubjectScore {
+    examSubject: String!
+    score: Int!
+  }
+
   type JambExamResult {
     sessionId: Int!
-    subjectScores: [Score!]!
+    subjectScores: [SubjectScore!]!
     totalScore: Int!
     isCompleted: Boolean!
     timeSpent: String!
@@ -29,10 +53,6 @@ export const jambTypeDefs = gql`
     id: String!
     question: String!
     options: [String!]!
-    answer: String!
-    examType: String!
-    examSubject: String!
-    examYear: String!
   }
 
   type Score {
@@ -45,6 +65,21 @@ export const jambTypeDefs = gql`
     date: DateTime!
   }
 
+  input StudentInput {
+    firstName: String!
+    lastName: String!
+    userName: String!
+    email: String!
+    phoneNumber: String!
+    password: String!
+    studentType: String
+  }
+
+  input LoginInput {
+    identifier: String!
+    password: String!
+  }
+
   input AnswerInput {
     questionId: String!
     answer: String!
@@ -52,24 +87,15 @@ export const jambTypeDefs = gql`
 
   type Query {
     years: [String!]!
+    fetchExternalQuestions(examType: String!, examSubject: String!, examYear: String!): [Question!]!
+    fetchStudentQuestions(examType: String!, examSubject: String!, examYear: String!): [Question!]!
     fetchJambSubjectQuestions(sessionId: Int!): [SubjectQuestions!]!
   }
 
   type Mutation {
-    startJambExam(
-      subjects: [String!]!
-      examYear: String!
-    ): JambExamSession!
-
-    submitAnswer(
-      sessionId: Int!
-      questionId: String!
-      answer: String!
-    ): Boolean!
-
-    finishJambExam(
-      sessionId: Int!
-      answers: [AnswerInput!]
-    ): JambExamResult!
+    registerStudent(input: StudentInput!): Student!
+    loginStudent(input: LoginInput!): LoginResponse!
+    startJambExam(subjects: [String!]!, examYear: String!): JambExamSession!
+    finishJambExam(sessionId: Int!, answers: [AnswerInput!]): JambExamResult!
   }
 `;

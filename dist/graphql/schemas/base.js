@@ -20,6 +20,6 @@ exports.baseTypeDefs = (0, graphql_tag_1.gql) `
     id: String!
     question: String!
     options: [String!]!
-    answer: String
+    answer: String # Nullable
   }
 `;

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.submitTypeDefs = void 0;
+// src/graphql/schemas/submit.ts
 const graphql_tag_1 = require("graphql-tag");
 exports.submitTypeDefs = (0, graphql_tag_1.gql) `
   type QuestionOption {
@@ -13,7 +14,7 @@ exports.submitTypeDefs = (0, graphql_tag_1.gql) `
     id: String!
     question: String!
     options: [String!]!
-    answer: String!
+    answer: String # Changed from String! to String
     questionOption: QuestionOption
   }
 
