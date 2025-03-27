@@ -75,6 +75,23 @@ export const jambResolvers = {
 
       return subjectQuestions;
     },
+
+    me: async (_: any, __: any, context: Context) => {
+      const studentId = authMiddleware(context);
+      const student = await prisma.student.findUnique({
+        where: { id: studentId },
+      });
+
+      if (!student) {
+        throw new ApolloError('Student not found', 'NOT_FOUND');
+      }
+
+      return {
+        ...student,
+        createdAt: student.createdAt.toISOString(),
+        updatedAt: student.updatedAt.toISOString(),
+      };
+    },
   },
 
   Mutation: {

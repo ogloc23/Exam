@@ -88,6 +88,7 @@ exports.jambTypeDefs = (0, graphql_tag_1.gql) `
   }
 
   type Query {
+    me: Student!
     years: [String!]!
     fetchExternalQuestions(examType: String!, examSubject: String!, examYear: String!): [Question!]!
     fetchStudentQuestions(examType: String!, examSubject: String!, examYear: String!): [Question!]!

@@ -86,6 +86,7 @@ export const jambTypeDefs = gql`
   }
 
   type Query {
+    me: Student!
     years: [String!]!
     fetchExternalQuestions(examType: String!, examSubject: String!, examYear: String!): [Question!]!
     fetchStudentQuestions(examType: String!, examSubject: String!, examYear: String!): [Question!]!

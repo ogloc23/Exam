@@ -80,6 +80,16 @@ exports.jambResolvers = {
             })));
             return subjectQuestions;
         }),
+        me: (_, __, context) => __awaiter(void 0, void 0, void 0, function* () {
+            const studentId = authMiddleware(context);
+            const student = yield prisma.student.findUnique({
+                where: { id: studentId },
+            });
+            if (!student) {
+                throw new apollo_server_express_1.ApolloError('Student not found', 'NOT_FOUND');
+            }
+            return Object.assign(Object.assign({}, student), { createdAt: student.createdAt.toISOString(), updatedAt: student.updatedAt.toISOString() });
+        }),
     },
     Mutation: {
         registerStudent: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { input }) {
