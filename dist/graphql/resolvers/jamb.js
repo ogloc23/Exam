@@ -20,10 +20,9 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const apollo_server_express_1 = require("apollo-server-express");
 const prisma = new client_1.PrismaClient();
 const JAMB_TIME_LIMIT = 5400 * 1000; // 90 minutes in milliseconds
-const YEARS = [
-    '2005', '2006', '2007', '2008', '2009', '2010', '2011', '2012', '2013', '2014',
-    '2015', '2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'
-];
+// Dynamically generate YEARS from current year (2025) to 2005
+const currentYear = new Date().getFullYear(); // 2025 as of March 26, 2025
+const YEARS = Array.from({ length: currentYear - 2004 }, (_, i) => String(currentYear - i)); // [2025, 2024, ..., 2005]
 const authMiddleware = (context) => {
     const token = context.token;
     if (!token)
@@ -95,20 +94,25 @@ exports.jambResolvers = {
         registerStudent: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { input }) {
             try {
                 const { firstName, lastName, userName, email, phoneNumber, password, studentType } = input;
-                if (!firstName || !lastName || !userName || !email || !phoneNumber || !password) {
-                    throw new apollo_server_express_1.ApolloError('All fields except studentType are required', 'VALIDATION_ERROR', {
-                        missingFields: Object.keys(input).filter(key => !input[key]),
+                // Required fields validation
+                if (!firstName || !lastName || !userName || !password) {
+                    throw new apollo_server_express_1.ApolloError('First name, last name, username, and password are required', 'VALIDATION_ERROR', {
+                        missingFields: Object.keys({ firstName, lastName, userName, password }).filter(key => !input[key]),
                     });
                 }
-                if (!email.includes('@') || !email.includes('.')) {
+                // Optional email validation (if provided)
+                if (email && (!email.includes('@') || !email.includes('.'))) {
                     throw new apollo_server_express_1.ApolloError('Invalid email format', 'VALIDATION_ERROR', { field: 'email' });
                 }
-                const phoneDigits = phoneNumber.replace(/\D/g, '');
-                if (phoneDigits.length !== 11) {
-                    throw new apollo_server_express_1.ApolloError('Phone number must be exactly 11 digits', 'VALIDATION_ERROR', {
-                        field: 'phoneNumber',
-                        receivedLength: phoneDigits.length,
-                    });
+                // Optional phoneNumber validation (if provided)
+                if (phoneNumber) {
+                    const phoneDigits = phoneNumber.replace(/\D/g, '');
+                    if (phoneDigits.length !== 11) {
+                        throw new apollo_server_express_1.ApolloError('Phone number must be exactly 11 digits', 'VALIDATION_ERROR', {
+                            field: 'phoneNumber',
+                            receivedLength: phoneDigits.length,
+                        });
+                    }
                 }
                 if (password.length < 8) {
                     throw new apollo_server_express_1.ApolloError('Password must be at least 8 characters', 'VALIDATION_ERROR', {
@@ -118,17 +122,18 @@ exports.jambResolvers = {
                 if (studentType && !['SCIENCE', 'ART'].includes(studentType)) {
                     throw new apollo_server_express_1.ApolloError('Invalid student type', 'VALIDATION_ERROR', { field: 'studentType' });
                 }
+                // Check for existing username (and email if provided)
                 const existingStudent = yield prisma.student.findFirst({
-                    where: { OR: [{ userName }, { email }] },
+                    where: { OR: [{ userName }, ...(email ? [{ email }] : [])] },
                 });
                 if (existingStudent) {
-                    if (existingStudent.userName === userName && existingStudent.email === email) {
+                    if (existingStudent.userName === userName && email && existingStudent.email === email) {
                         throw new apollo_server_express_1.ApolloError('Username and email already exist', 'DUPLICATE_USER', { fields: ['userName', 'email'] });
                     }
                     else if (existingStudent.userName === userName) {
                         throw new apollo_server_express_1.ApolloError('Username already exists', 'DUPLICATE_USER', { field: 'userName' });
                     }
-                    else {
+                    else if (email && existingStudent.email === email) {
                         throw new apollo_server_express_1.ApolloError('Email already exists', 'DUPLICATE_USER', { field: 'email' });
                     }
                 }
@@ -138,8 +143,8 @@ exports.jambResolvers = {
                         firstName,
                         lastName,
                         userName,
-                        email,
-                        phoneNumber,
+                        email: email || null, // Allow null if not provided
+                        phoneNumber: phoneNumber || null, // Allow null if not provided
                         password: hashedPassword,
                         studentType,
                     },

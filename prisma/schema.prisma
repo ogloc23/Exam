@@ -12,13 +12,13 @@ model Student {
   firstName    String
   lastName     String
   userName     String            @unique
-  email        String            @unique // Fixed: Removed invalid "d for science/art"
+  email        String?           @unique
   createdAt    DateTime          @default(now())
-  phoneNumber  String
+  phoneNumber  String?
   password     String
-  studentType  String?           // Optional field (Science or Art)
+  studentType  String?
   updatedAt    DateTime          @updatedAt
-  examSessions JambExamSession[] // Link to exam sessions
+  examSessions JambExamSession[]
 }
 
 model Subject {
@@ -26,6 +26,7 @@ model Subject {
   name     String
   examType String
   scores   Score[]
+
   @@unique([name, examType])
 }
 
@@ -37,9 +38,10 @@ model Score {
   examYear      String
   score         Int
   date          DateTime         @default(now())
-  subject       Subject          @relation(fields: [subjectId], references: [id])
-  jambSession   JambExamSession? @relation(fields: [jambSessionId], references: [id])
   jambSessionId Int?
+  jambSession   JambExamSession? @relation(fields: [jambSessionId], references: [id])
+  subject       Subject          @relation(fields: [subjectId], references: [id])
+
   @@unique([jambSessionId, examSubject])
 }
 
@@ -52,30 +54,32 @@ model Question {
   examSubject String
   examYear    String
   answers     Answer[]
+
   @@unique([examYear, id])
 }
 
 model JambExamSession {
-  id          Int      @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   subjects    String[]
   examYear    String
-  startTime   DateTime @default(now())
+  startTime   DateTime  @default(now())
   endTime     DateTime?
-  isCompleted Boolean  @default(false)
-  scores      Score[]
+  isCompleted Boolean   @default(false)
+  studentId   Int
   answers     Answer[]
-  studentId   Int      // Foreign key to Student
-  student     Student  @relation(fields: [studentId], references: [id])
+  student     Student   @relation(fields: [studentId], references: [id])
+  scores      Score[]
 }
 
 model Answer {
-  id         Int      @id @default(autoincrement())
+  id         Int             @id @default(autoincrement())
   sessionId  Int
   questionId String
   answer     String
-  session    JambExamSession @relation(fields: [sessionId], references: [id])
   question   Question        @relation(fields: [questionId], references: [id])
+  session    JambExamSession @relation(fields: [sessionId], references: [id])
+
+  @@unique([sessionId, questionId])
   @@index([sessionId])
   @@index([questionId])
-  @@unique([sessionId, questionId])
 }

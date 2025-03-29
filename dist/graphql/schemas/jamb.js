@@ -9,8 +9,8 @@ exports.jambTypeDefs = (0, graphql_tag_1.gql) `
     firstName: String!
     lastName: String!
     userName: String!
-    email: String!
-    phoneNumber: String!
+    email: String
+    phoneNumber: String
     studentType: String
     createdAt: String!
     updatedAt: String!
@@ -71,8 +71,8 @@ exports.jambTypeDefs = (0, graphql_tag_1.gql) `
     firstName: String!
     lastName: String!
     userName: String!
-    email: String!
-    phoneNumber: String!
+    email: String
+    phoneNumber: String
     password: String!
     studentType: String
   }

@@ -7,8 +7,8 @@ export const jambTypeDefs = gql`
     firstName: String!
     lastName: String!
     userName: String!
-    email: String!
-    phoneNumber: String!
+    email: String
+    phoneNumber: String
     studentType: String
     createdAt: String!
     updatedAt: String!
@@ -69,8 +69,8 @@ export const jambTypeDefs = gql`
     firstName: String!
     lastName: String!
     userName: String!
-    email: String!
-    phoneNumber: String!
+    email: String
+    phoneNumber: String
     password: String!
     studentType: String
   }
