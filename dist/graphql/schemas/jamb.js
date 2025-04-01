@@ -55,6 +55,9 @@ exports.jambTypeDefs = (0, graphql_tag_1.gql) `
     id: String!
     question: String!
     options: [String!]!
+    answer: String
+    answerUrl: String
+    imageUrl: String
   }
 
   type Score {

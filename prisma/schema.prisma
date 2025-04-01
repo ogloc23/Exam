@@ -49,10 +49,12 @@ model Question {
   id          String   @id
   question    String
   options     String[]
-  answer      String
+  answer      String?  // Made nullable to match fetch.ts
   examType    String
   examSubject String
   examYear    String
+  answerUrl   String?  // Added for Myschool answer link
+  imageUrl    String?  // Added for Cloudinary image URL
   answers     Answer[]
 
   @@unique([examYear, id])

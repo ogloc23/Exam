@@ -1,14 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolvers = exports.typeDefs = void 0;
-// src/graphql/merge.ts
 const base_1 = require("./schemas/base");
 const exam_1 = require("./schemas/exam");
 const fetch_1 = require("./schemas/fetch");
 const submit_1 = require("./schemas/submit");
 const jamb_1 = require("./schemas/jamb");
 const exam_2 = require("./resolvers/exam");
-const fetch_2 = require("./resolvers/fetch");
+const fetch_2 = require("./resolvers/fetch"); // Changed to ES Module import
 const submit_2 = require("./resolvers/submit");
 const jamb_2 = require("./resolvers/jamb");
 // Combine schemas

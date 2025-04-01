@@ -53,6 +53,9 @@ export const jambTypeDefs = gql`
     id: String!
     question: String!
     options: [String!]!
+    answer: String
+    answerUrl: String
+    imageUrl: String
   }
 
   type Score {

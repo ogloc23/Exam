@@ -1,4 +1,3 @@
-// src/graphql/merge.ts
 import { baseTypeDefs } from './schemas/base';
 import { examTypeDefs } from './schemas/exam';
 import { fetchTypeDefs } from './schemas/fetch';
@@ -6,7 +5,7 @@ import { submitTypeDefs } from './schemas/submit';
 import { jambTypeDefs } from './schemas/jamb';
 
 import { examResolvers } from './resolvers/exam';
-import { fetchResolvers } from './resolvers/fetch';
+import { fetchResolvers } from './resolvers/fetch'; // Changed to ES Module import
 import { submitResolvers } from './resolvers/submit';
 import { jambResolvers } from './resolvers/jamb';
 

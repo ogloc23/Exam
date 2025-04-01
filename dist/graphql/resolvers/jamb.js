@@ -13,16 +13,21 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.jambResolvers = void 0;
-// src/resolvers/jamb.ts
+// src/graphql/resolvers/jamb.ts
 const client_1 = require("@prisma/client");
 const bcryptjs_1 = require("bcryptjs");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const apollo_server_express_1 = require("apollo-server-express");
-const prisma = new client_1.PrismaClient();
+const fetch_1 = require("./fetch"); // Adjust path as needed
+const prisma = new client_1.PrismaClient({
+    log: ['query', 'info', 'warn', 'error'],
+});
 const JAMB_TIME_LIMIT = 5400 * 1000; // 90 minutes in milliseconds
-// Dynamically generate YEARS from current year (2025) to 2005
-const currentYear = new Date().getFullYear(); // 2025 as of March 26, 2025
-const YEARS = Array.from({ length: currentYear - 2004 }, (_, i) => String(currentYear - i)); // [2025, 2024, ..., 2005]
+// Define YEARS statically from 2025 to 2005
+const YEARS = [
+    '2025', '2024', '2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016',
+    '2015', '2014', '2013', '2012', '2011', '2010', '2009', '2008', '2007', '2006', '2005'
+];
 const authMiddleware = (context) => {
     const token = context.token;
     if (!token)
@@ -48,33 +53,113 @@ exports.jambResolvers = {
         years: () => YEARS,
         fetchJambSubjectQuestions: (_1, _a, context_1) => __awaiter(void 0, [_1, _a, context_1], void 0, function* (_, { sessionId }, context) {
             const studentId = authMiddleware(context);
-            const session = yield prisma.jambExamSession.findUnique({ where: { id: sessionId } });
+            const session = yield prisma.jambExamSession.findUnique({
+                where: { id: sessionId },
+                select: { id: true, studentId: true, subjects: true, examYear: true, isCompleted: true }
+            });
             if (!session)
                 throw new apollo_server_express_1.ApolloError('Session not found', 'NOT_FOUND');
             if (session.studentId !== studentId)
                 throw new apollo_server_express_1.ApolloError('Unauthorized access to session', 'FORBIDDEN');
             if (session.isCompleted)
                 throw new apollo_server_express_1.ApolloError('Session already completed', 'INVALID_STATE');
+            console.log(`Processing session ${sessionId} with subjects: ${session.subjects}, year: ${session.examYear}`);
+            if (!YEARS.includes(session.examYear)) {
+                throw new apollo_server_express_1.ApolloError(`Invalid exam year: ${session.examYear}. Must be one of: ${YEARS.join(', ')}`, 'VALIDATION_ERROR');
+            }
+            const examYear = session.examYear;
             const subjectQuestions = yield Promise.all(session.subjects.map((subject) => __awaiter(void 0, void 0, void 0, function* () {
-                const dbQuestions = yield prisma.question.findMany({
+                console.log(`Original subject from session: ${subject}`);
+                const normalizedSubject = subject.replace(/\s+/g, '-').toLowerCase();
+                const VALID_SUBJECTS = [
+                    'mathematics', 'english-language', 'fine-arts', 'music', 'french', 'animal-husbandry', 'insurance', 'chemistry',
+                    'physics', 'yoruba', 'biology', 'geography', 'literature-in-english', 'economics', 'commerce',
+                    'accounts-principles-of-accounts', 'government', 'igbo', 'christian-religious-knowledge', 'agricultural-science',
+                    'islamic-religious-knowledge', 'history', 'civic-education', 'further-mathematics', 'arabic', 'home-economics',
+                    'hausa', 'book-keeping', 'data-processing', 'catering-craft-practice', 'computer-studies', 'marketing',
+                    'physical-education', 'office-practice', 'technical-drawing', 'food-and-nutrition', 'home-management'
+                ];
+                if (!VALID_SUBJECTS.includes(normalizedSubject)) {
+                    throw new apollo_server_express_1.ApolloError(`Invalid subject: ${subject}. Valid subjects are: ${VALID_SUBJECTS.join(', ')}`, 'VALIDATION_ERROR');
+                }
+                console.log(`Normalized subject: ${normalizedSubject}`);
+                let dbQuestions = yield prisma.question.findMany({
                     where: {
                         examType: 'jamb',
-                        examSubject: subject,
+                        examSubject: normalizedSubject,
                         examYear: session.examYear,
                     },
-                    take: 20,
                 });
-                if (dbQuestions.length < 20) {
-                    throw new apollo_server_express_1.ApolloError(`Not enough questions for ${subject}: got ${dbQuestions.length}`, 'INSUFFICIENT_DATA');
+                const validQuestions = dbQuestions.filter(q => {
+                    const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
+                    const requiresImage = q.question.toLowerCase().includes('diagram') ||
+                        q.question.toLowerCase().includes('figure') ||
+                        q.question.toLowerCase().includes('image');
+                    const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
+                    return hasValidOptions && hasImageIfRequired;
+                });
+                console.log(`Existing valid questions for ${normalizedSubject}: ${validQuestions.length}`);
+                if (validQuestions.length < 40) {
+                    console.log(`Insufficient valid questions for ${normalizedSubject}, attempting to fetch...`);
+                    let fetchedQuestions = [];
+                    try {
+                        fetchedQuestions = yield (0, fetch_1.fetchExternalQuestions)('jamb', normalizedSubject, examYear, 40, 80);
+                        console.log(`Fetched ${fetchedQuestions.length} questions from ALOC for ${normalizedSubject}`);
+                        yield prisma.question.createMany({
+                            data: fetchedQuestions,
+                            skipDuplicates: true,
+                        });
+                    }
+                    catch (alocError) {
+                        console.error(`ALOC fetch failed for ${normalizedSubject}: ${alocError.message}`);
+                        try {
+                            fetchedQuestions = yield (0, fetch_1.fetchMyschoolQuestions)('jamb', normalizedSubject, examYear, 80);
+                            console.log(`Fetched ${fetchedQuestions.length} questions from Myschool.ng for ${normalizedSubject}`);
+                            yield prisma.question.createMany({
+                                data: fetchedQuestions,
+                                skipDuplicates: true,
+                            });
+                        }
+                        catch (myschoolError) {
+                            console.error(`Myschool fetch failed for ${normalizedSubject}: ${myschoolError.message}`);
+                        }
+                    }
+                    dbQuestions = yield prisma.question.findMany({
+                        where: {
+                            examType: 'jamb',
+                            examSubject: normalizedSubject,
+                            examYear: session.examYear,
+                        },
+                    });
+                    const newValidQuestions = dbQuestions.filter(q => {
+                        const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
+                        const requiresImage = q.question.toLowerCase().includes('diagram') ||
+                            q.question.toLowerCase().includes('figure') ||
+                            q.question.toLowerCase().includes('image');
+                        const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
+                        return hasValidOptions && hasImageIfRequired;
+                    });
+                    validQuestions.push(...newValidQuestions.filter(q => !validQuestions.some(vq => vq.id === q.id)));
+                    console.log(`Updated valid questions for ${normalizedSubject} after fetch: ${validQuestions.length}`);
                 }
-                const shuffledQuestions = shuffleArray(dbQuestions);
+                const finalQuestions = validQuestions.slice(0, 40);
+                if (finalQuestions.length < 40) {
+                    throw new apollo_server_express_1.ApolloError(`Not enough valid questions for ${normalizedSubject}: got ${finalQuestions.length} after fetch attempts`, 'INSUFFICIENT_DATA');
+                }
+                console.log(`Final valid questions for ${normalizedSubject}: ${finalQuestions.length}`);
+                const shuffledQuestions = shuffleArray(finalQuestions);
                 return {
-                    subject,
-                    questions: shuffledQuestions.map(q => ({
-                        id: q.id,
-                        question: q.question,
-                        options: q.options,
-                    })),
+                    subject: normalizedSubject,
+                    questions: shuffledQuestions.map(q => {
+                        var _a, _b;
+                        return ({
+                            id: q.id,
+                            question: q.question,
+                            options: q.options,
+                            answer: (_a = q.answer) !== null && _a !== void 0 ? _a : undefined, // Use answer instead of answerUrl
+                            imageUrl: (_b = q.imageUrl) !== null && _b !== void 0 ? _b : undefined,
+                        });
+                    }),
                 };
             })));
             return subjectQuestions;
@@ -94,17 +179,14 @@ exports.jambResolvers = {
         registerStudent: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { input }) {
             try {
                 const { firstName, lastName, userName, email, phoneNumber, password, studentType } = input;
-                // Required fields validation
                 if (!firstName || !lastName || !userName || !password) {
                     throw new apollo_server_express_1.ApolloError('First name, last name, username, and password are required', 'VALIDATION_ERROR', {
                         missingFields: Object.keys({ firstName, lastName, userName, password }).filter(key => !input[key]),
                     });
                 }
-                // Optional email validation (if provided)
                 if (email && (!email.includes('@') || !email.includes('.'))) {
                     throw new apollo_server_express_1.ApolloError('Invalid email format', 'VALIDATION_ERROR', { field: 'email' });
                 }
-                // Optional phoneNumber validation (if provided)
                 if (phoneNumber) {
                     const phoneDigits = phoneNumber.replace(/\D/g, '');
                     if (phoneDigits.length !== 11) {
@@ -115,14 +197,11 @@ exports.jambResolvers = {
                     }
                 }
                 if (password.length < 8) {
-                    throw new apollo_server_express_1.ApolloError('Password must be at least 8 characters', 'VALIDATION_ERROR', {
-                        field: 'password',
-                    });
+                    throw new apollo_server_express_1.ApolloError('Password must be at least 8 characters', 'VALIDATION_ERROR', { field: 'password' });
                 }
                 if (studentType && !['SCIENCE', 'ART'].includes(studentType)) {
                     throw new apollo_server_express_1.ApolloError('Invalid student type', 'VALIDATION_ERROR', { field: 'studentType' });
                 }
-                // Check for existing username (and email if provided)
                 const existingStudent = yield prisma.student.findFirst({
                     where: { OR: [{ userName }, ...(email ? [{ email }] : [])] },
                 });
@@ -143,8 +222,8 @@ exports.jambResolvers = {
                         firstName,
                         lastName,
                         userName,
-                        email: email || null, // Allow null if not provided
-                        phoneNumber: phoneNumber || null, // Allow null if not provided
+                        email: email || null,
+                        phoneNumber: phoneNumber || null,
                         password: hashedPassword,
                         studentType,
                     },
@@ -176,7 +255,7 @@ exports.jambResolvers = {
                 if (!isPasswordValid) {
                     throw new apollo_server_express_1.ApolloError('Invalid credentials', 'AUTHENTICATION_FAILED');
                 }
-                const token = jsonwebtoken_1.default.sign({ id: student.id, userName: student.userName }, process.env.JWT_SECRET || 'your-secret-key', { expiresIn: '1h' });
+                const token = jsonwebtoken_1.default.sign({ id: student.id, userName: student.userName }, process.env.JWT_SECRET || 'your-secret-key');
                 return {
                     success: true,
                     message: 'Login successful',
@@ -194,14 +273,17 @@ exports.jambResolvers = {
         startJambExam: (_1, _a, context_1) => __awaiter(void 0, [_1, _a, context_1], void 0, function* (_, { subjects, examYear }, context) {
             var _b;
             const studentId = authMiddleware(context);
-            const trimmedSubjects = subjects.map(s => s.trim().toLowerCase());
+            const trimmedSubjects = subjects.map(s => s.trim().toLowerCase().replace(/\s+/g, '-'));
             if (trimmedSubjects.length !== 4)
                 throw new apollo_server_express_1.ApolloError('Exactly 4 subjects required', 'VALIDATION_ERROR');
-            if (!trimmedSubjects.includes('english language'))
+            if (!trimmedSubjects.includes('english-language'))
                 throw new apollo_server_express_1.ApolloError('English Language is compulsory', 'VALIDATION_ERROR');
             if (!YEARS.includes(examYear))
                 throw new apollo_server_express_1.ApolloError(`Invalid year: ${examYear}`, 'VALIDATION_ERROR');
-            const validSubjects = ['english language', 'mathematics', 'physics', 'chemistry', 'biology', 'literature', 'government', 'economics'];
+            const validSubjects = [
+                'english-language', 'mathematics', 'physics', 'chemistry', 'biology', 'literature-in-english',
+                'government', 'economics', 'christian-religious-knowledge', 'agricultural-science'
+            ];
             const invalidSubjects = trimmedSubjects.filter(sub => !validSubjects.includes(sub));
             if (invalidSubjects.length > 0)
                 throw new apollo_server_express_1.ApolloError(`Invalid subjects: ${invalidSubjects.join(', ')}`, 'VALIDATION_ERROR');
@@ -221,7 +303,7 @@ exports.jambResolvers = {
                 endTime: ((_b = newSession.endTime) === null || _b === void 0 ? void 0 : _b.toISOString()) || null,
                 isCompleted: newSession.isCompleted,
                 scores: [],
-                remainingTime: '90min 0s', // Initial value, updated by field resolver
+                remainingTime: '90min 0s',
             };
         }),
         finishJambExam: (_1, _a, context_1) => __awaiter(void 0, [_1, _a, context_1], void 0, function* (_, { sessionId, answers }, context) {
@@ -265,7 +347,7 @@ exports.jambResolvers = {
                 newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
             }
             const subjectScores = allSubjects.map(subject => {
-                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 20);
+                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 40);
                 const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
                 const score = subjectAnswers.reduce((acc, { question, answer }) => {
                     const submittedOptionText = ['a', 'b', 'c', 'd'].includes(answer.toLowerCase())
