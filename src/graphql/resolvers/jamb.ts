@@ -61,7 +61,6 @@ export const jambResolvers = {
       }
       const examYear: ExamYear = session.examYear as ExamYear;
 
-      // Validate exactly 4 subjects
       if (session.subjects.length !== 4) {
         throw new ApolloError(`Exactly 4 subjects required, got ${session.subjects.length}`, 'VALIDATION_ERROR');
       }
@@ -84,6 +83,7 @@ export const jambResolvers = {
           }
           console.log(`Normalized subject: ${normalizedSubject}`);
 
+          // Step 1: Fetch questions for the requested year
           let dbQuestions = await prisma.question.findMany({
             where: {
               examType: 'jamb',
@@ -92,7 +92,7 @@ export const jambResolvers = {
             },
           });
 
-          const validQuestions = dbQuestions.filter(q => {
+          let validQuestions = dbQuestions.filter(q => {
             const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
             const requiresImage = q.question.toLowerCase().includes('diagram') || 
                                  q.question.toLowerCase().includes('figure') || 
@@ -100,9 +100,84 @@ export const jambResolvers = {
             const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
             return hasValidOptions && hasImageIfRequired;
           });
-          console.log(`Existing valid questions for ${normalizedSubject}: ${validQuestions.length}`);
+          console.log(`Existing valid questions for ${normalizedSubject} in ${examYear}: ${validQuestions.length}`);
 
-          if (validQuestions.length < 50) { // Updated to 50
+          // Step 2: Handle 2025 by shuffling previous years if needed
+          if (examYear === '2025' && validQuestions.length < 50) {
+            console.log(`Insufficient 2025 questions for ${normalizedSubject}, fetching from previous years...`);
+            
+            const previousYearsQuestions = await prisma.question.findMany({
+              where: {
+                examType: 'jamb',
+                examSubject: normalizedSubject,
+                examYear: { in: [...YEARS.filter(y => y !== '2025')] }, // Mutable array
+              },
+            });
+
+            const validPreviousQuestions = previousYearsQuestions.filter(q => {
+              const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
+              const requiresImage = q.question.toLowerCase().includes('diagram') || 
+                                   q.question.toLowerCase().includes('figure') || 
+                                   q.question.toLowerCase().includes('image');
+              const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
+              return hasValidOptions && hasImageIfRequired;
+            });
+            console.log(`Valid questions from 2005-2024 for ${normalizedSubject}: ${validPreviousQuestions.length}`);
+
+            if (validPreviousQuestions.length < 50) {
+              try {
+                const fetchedQuestions = await fetchMyschoolQuestions(
+                  'jamb' as ExamType,
+                  normalizedSubject,
+                  '2024' as ExamYear,
+                  50
+                );
+                console.log(`Fetched ${fetchedQuestions.length} questions from Myschool.ng for ${normalizedSubject} (2024)`);
+                await prisma.question.createMany({
+                  data: fetchedQuestions,
+                  skipDuplicates: true,
+                });
+                const updatedPreviousQuestions = await prisma.question.findMany({
+                  where: {
+                    examType: 'jamb',
+                    examSubject: normalizedSubject,
+                    examYear: { in: [...YEARS.filter(y => y !== '2025')] }, // Mutable array
+                  },
+                });
+                validPreviousQuestions.push(...updatedPreviousQuestions.filter(q => {
+                  const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
+                  const requiresImage = q.question.toLowerCase().includes('diagram') || 
+                                       q.question.toLowerCase().includes('figure') || 
+                                       q.question.toLowerCase().includes('image');
+                  const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
+                  return hasValidOptions && hasImageIfRequired && !validPreviousQuestions.some(vq => vq.id === q.id);
+                }));
+                console.log(`Updated valid questions from 2005-2024 for ${normalizedSubject}: ${validPreviousQuestions.length}`);
+              } catch (myschoolError: any) {
+                console.error(`Myschool fetch failed for ${normalizedSubject} (2024): ${myschoolError.message}`);
+              }
+            }
+
+            const shuffledPreviousQuestions = shuffleArray(validPreviousQuestions).slice(0, 50);
+            if (shuffledPreviousQuestions.length >= 50) {
+              const questionsFor2025 = shuffledPreviousQuestions.map((q, index) => ({
+                ...q,
+                id: `2025-${normalizedSubject}-${index}-${Date.now()}`, // Unique ID
+                examYear: '2025' as ExamYear,
+              }));
+              await prisma.question.createMany({
+                data: questionsFor2025,
+                skipDuplicates: true,
+              });
+              console.log(`Saved ${questionsFor2025.length} shuffled questions for ${normalizedSubject} as 2025`);
+              validQuestions = questionsFor2025;
+            } else {
+              console.warn(`Only ${validPreviousQuestions.length} valid questions available for ${normalizedSubject}`);
+            }
+          }
+
+          // Step 3: Fetch for non-2025 years if needed
+          if (examYear !== '2025' && validQuestions.length < 50) {
             console.log(`Insufficient valid questions for ${normalizedSubject}, attempting to fetch...`);
             let fetchedQuestions: Question[] = [];
 
@@ -111,7 +186,7 @@ export const jambResolvers = {
                 'jamb' as ExamType,
                 normalizedSubject,
                 examYear,
-                50 // Target 50 questions
+                50
               );
               console.log(`Fetched ${fetchedQuestions.length} questions from Myschool.ng for ${normalizedSubject}`);
               await prisma.question.createMany({
@@ -125,8 +200,8 @@ export const jambResolvers = {
                   'jamb' as ExamType,
                   normalizedSubject,
                   examYear,
-                  25, // Batch size
-                  50  // Total target
+                  25,
+                  50
                 );
                 console.log(`Fetched ${fetchedQuestions.length} questions from ALOC for ${normalizedSubject}`);
                 await prisma.question.createMany({
@@ -157,7 +232,8 @@ export const jambResolvers = {
             console.log(`Updated valid questions for ${normalizedSubject} after fetch: ${validQuestions.length}`);
           }
 
-          const finalQuestions = validQuestions.slice(0, 50); // Updated to 50
+          // Step 4: Finalize questions
+          const finalQuestions = validQuestions.slice(0, 50);
           if (finalQuestions.length < 50) {
             throw new ApolloError(`Not enough valid questions for ${normalizedSubject}: got ${finalQuestions.length} after fetch attempts`, 'INSUFFICIENT_DATA');
           }
@@ -204,7 +280,6 @@ export const jambResolvers = {
       _: any,
       { input }: { input: { firstName: string; lastName: string; userName: string; email?: string; phoneNumber?: string; password: string; studentType?: string } }
     ) => {
-      // Unchanged, keeping as is
       try {
         const { firstName, lastName, userName, email, phoneNumber, password, studentType } = input;
 
@@ -276,7 +351,6 @@ export const jambResolvers = {
     },
 
     loginStudent: async (_: any, { input }: { input: { identifier: string; password: string } }) => {
-      // Unchanged, keeping as is
       try {
         const { identifier, password } = input;
 
@@ -420,14 +494,14 @@ export const jambResolvers = {
       }
 
       const subjectScores = allSubjects.map(subject => {
-        const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 50); // Updated to 50
+        const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 50);
         const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
 
         const score = subjectAnswers.reduce((acc, { question, answer }) => {
           const submittedOptionText = ['a', 'b', 'c', 'd'].includes(answer.toLowerCase())
             ? question.options[['a', 'b', 'c', 'd'].indexOf(answer.toLowerCase())]
             : answer;
-          return acc + (question.answer === submittedOptionText ? 2 : 0); // 2 points per correct answer
+          return acc + (question.answer === submittedOptionText ? 2 : 0);
         }, 0);
 
         return {

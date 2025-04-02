@@ -67,7 +67,6 @@ exports.jambResolvers = {
                 throw new apollo_server_express_1.ApolloError(`Invalid exam year: ${session.examYear}. Must be one of: ${YEARS.join(', ')}`, 'VALIDATION_ERROR');
             }
             const examYear = session.examYear;
-            // Validate exactly 4 subjects
             if (session.subjects.length !== 4) {
                 throw new apollo_server_express_1.ApolloError(`Exactly 4 subjects required, got ${session.subjects.length}`, 'VALIDATION_ERROR');
             }
@@ -86,6 +85,7 @@ exports.jambResolvers = {
                     throw new apollo_server_express_1.ApolloError(`Invalid subject: ${subject}. Valid subjects are: ${VALID_SUBJECTS.join(', ')}`, 'VALIDATION_ERROR');
                 }
                 console.log(`Normalized subject: ${normalizedSubject}`);
+                // Step 1: Fetch questions for the requested year
                 let dbQuestions = yield prisma.question.findMany({
                     where: {
                         examType: 'jamb',
@@ -93,7 +93,7 @@ exports.jambResolvers = {
                         examYear: session.examYear,
                     },
                 });
-                const validQuestions = dbQuestions.filter(q => {
+                let validQuestions = dbQuestions.filter(q => {
                     const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
                     const requiresImage = q.question.toLowerCase().includes('diagram') ||
                         q.question.toLowerCase().includes('figure') ||
@@ -101,13 +101,75 @@ exports.jambResolvers = {
                     const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
                     return hasValidOptions && hasImageIfRequired;
                 });
-                console.log(`Existing valid questions for ${normalizedSubject}: ${validQuestions.length}`);
-                if (validQuestions.length < 50) { // Updated to 50
+                console.log(`Existing valid questions for ${normalizedSubject} in ${examYear}: ${validQuestions.length}`);
+                // Step 2: Handle 2025 by shuffling previous years if needed
+                if (examYear === '2025' && validQuestions.length < 50) {
+                    console.log(`Insufficient 2025 questions for ${normalizedSubject}, fetching from previous years...`);
+                    const previousYearsQuestions = yield prisma.question.findMany({
+                        where: {
+                            examType: 'jamb',
+                            examSubject: normalizedSubject,
+                            examYear: { in: [...YEARS.filter(y => y !== '2025')] }, // Mutable array
+                        },
+                    });
+                    const validPreviousQuestions = previousYearsQuestions.filter(q => {
+                        const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
+                        const requiresImage = q.question.toLowerCase().includes('diagram') ||
+                            q.question.toLowerCase().includes('figure') ||
+                            q.question.toLowerCase().includes('image');
+                        const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
+                        return hasValidOptions && hasImageIfRequired;
+                    });
+                    console.log(`Valid questions from 2005-2024 for ${normalizedSubject}: ${validPreviousQuestions.length}`);
+                    if (validPreviousQuestions.length < 50) {
+                        try {
+                            const fetchedQuestions = yield (0, fetch_1.fetchMyschoolQuestions)('jamb', normalizedSubject, '2024', 50);
+                            console.log(`Fetched ${fetchedQuestions.length} questions from Myschool.ng for ${normalizedSubject} (2024)`);
+                            yield prisma.question.createMany({
+                                data: fetchedQuestions,
+                                skipDuplicates: true,
+                            });
+                            const updatedPreviousQuestions = yield prisma.question.findMany({
+                                where: {
+                                    examType: 'jamb',
+                                    examSubject: normalizedSubject,
+                                    examYear: { in: [...YEARS.filter(y => y !== '2025')] }, // Mutable array
+                                },
+                            });
+                            validPreviousQuestions.push(...updatedPreviousQuestions.filter(q => {
+                                const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
+                                const requiresImage = q.question.toLowerCase().includes('diagram') ||
+                                    q.question.toLowerCase().includes('figure') ||
+                                    q.question.toLowerCase().includes('image');
+                                const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
+                                return hasValidOptions && hasImageIfRequired && !validPreviousQuestions.some(vq => vq.id === q.id);
+                            }));
+                            console.log(`Updated valid questions from 2005-2024 for ${normalizedSubject}: ${validPreviousQuestions.length}`);
+                        }
+                        catch (myschoolError) {
+                            console.error(`Myschool fetch failed for ${normalizedSubject} (2024): ${myschoolError.message}`);
+                        }
+                    }
+                    const shuffledPreviousQuestions = shuffleArray(validPreviousQuestions).slice(0, 50);
+                    if (shuffledPreviousQuestions.length >= 50) {
+                        const questionsFor2025 = shuffledPreviousQuestions.map((q, index) => (Object.assign(Object.assign({}, q), { id: `2025-${normalizedSubject}-${index}-${Date.now()}`, examYear: '2025' })));
+                        yield prisma.question.createMany({
+                            data: questionsFor2025,
+                            skipDuplicates: true,
+                        });
+                        console.log(`Saved ${questionsFor2025.length} shuffled questions for ${normalizedSubject} as 2025`);
+                        validQuestions = questionsFor2025;
+                    }
+                    else {
+                        console.warn(`Only ${validPreviousQuestions.length} valid questions available for ${normalizedSubject}`);
+                    }
+                }
+                // Step 3: Fetch for non-2025 years if needed
+                if (examYear !== '2025' && validQuestions.length < 50) {
                     console.log(`Insufficient valid questions for ${normalizedSubject}, attempting to fetch...`);
                     let fetchedQuestions = [];
                     try {
-                        fetchedQuestions = yield (0, fetch_1.fetchMyschoolQuestions)('jamb', normalizedSubject, examYear, 50 // Target 50 questions
-                        );
+                        fetchedQuestions = yield (0, fetch_1.fetchMyschoolQuestions)('jamb', normalizedSubject, examYear, 50);
                         console.log(`Fetched ${fetchedQuestions.length} questions from Myschool.ng for ${normalizedSubject}`);
                         yield prisma.question.createMany({
                             data: fetchedQuestions,
@@ -117,9 +179,7 @@ exports.jambResolvers = {
                     catch (myschoolError) {
                         console.error(`Myschool fetch failed for ${normalizedSubject}: ${myschoolError.message}`);
                         try {
-                            fetchedQuestions = yield (0, fetch_1.fetchExternalQuestions)('jamb', normalizedSubject, examYear, 25, // Batch size
-                            50 // Total target
-                            );
+                            fetchedQuestions = yield (0, fetch_1.fetchExternalQuestions)('jamb', normalizedSubject, examYear, 25, 50);
                             console.log(`Fetched ${fetchedQuestions.length} questions from ALOC for ${normalizedSubject}`);
                             yield prisma.question.createMany({
                                 data: fetchedQuestions,
@@ -148,7 +208,8 @@ exports.jambResolvers = {
                     validQuestions.push(...newValidQuestions.filter(q => !validQuestions.some(vq => vq.id === q.id)));
                     console.log(`Updated valid questions for ${normalizedSubject} after fetch: ${validQuestions.length}`);
                 }
-                const finalQuestions = validQuestions.slice(0, 50); // Updated to 50
+                // Step 4: Finalize questions
+                const finalQuestions = validQuestions.slice(0, 50);
                 if (finalQuestions.length < 50) {
                     throw new apollo_server_express_1.ApolloError(`Not enough valid questions for ${normalizedSubject}: got ${finalQuestions.length} after fetch attempts`, 'INSUFFICIENT_DATA');
                 }
@@ -184,7 +245,6 @@ exports.jambResolvers = {
     },
     Mutation: {
         registerStudent: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { input }) {
-            // Unchanged, keeping as is
             try {
                 const { firstName, lastName, userName, email, phoneNumber, password, studentType } = input;
                 if (!firstName || !lastName || !userName || !password) {
@@ -246,7 +306,6 @@ exports.jambResolvers = {
             }
         }),
         loginStudent: (_1, _a) => __awaiter(void 0, [_1, _a], void 0, function* (_, { input }) {
-            // Unchanged, keeping as is
             try {
                 const { identifier, password } = input;
                 if (!identifier || !password) {
@@ -360,13 +419,13 @@ exports.jambResolvers = {
                 newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
             }
             const subjectScores = allSubjects.map(subject => {
-                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 50); // Updated to 50
+                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 50);
                 const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
                 const score = subjectAnswers.reduce((acc, { question, answer }) => {
                     const submittedOptionText = ['a', 'b', 'c', 'd'].includes(answer.toLowerCase())
                         ? question.options[['a', 'b', 'c', 'd'].indexOf(answer.toLowerCase())]
                         : answer;
-                    return acc + (question.answer === submittedOptionText ? 2 : 0); // 2 points per correct answer
+                    return acc + (question.answer === submittedOptionText ? 2 : 0);
                 }, 0);
                 return {
                     examType: 'jamb',
