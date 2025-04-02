@@ -47,9 +47,25 @@ function shuffleArray(array) {
     }
     return shuffled;
 }
+function normalizeSubject(subject) {
+    return subject.trim().toLowerCase().replace(/\s+/g, '-');
+}
+function formatSubjectForFrontend(subject) {
+    const parts = subject.split('-');
+    return parts.map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join(' ');
+}
 exports.jambResolvers = {
     Query: {
         years: () => YEARS,
+        subjects: () => __awaiter(void 0, void 0, void 0, function* () {
+            const subjects = yield prisma.subject.findMany({
+                where: { examType: 'jamb' },
+            });
+            return subjects.map(subject => ({
+                id: subject.id,
+                name: formatSubjectForFrontend(subject.name),
+            }));
+        }),
         fetchJambSubjectQuestions: (_1, _a, context_1) => __awaiter(void 0, [_1, _a, context_1], void 0, function* (_, { sessionId }, context) {
             const studentId = authMiddleware(context);
             const session = yield prisma.jambExamSession.findUnique({
@@ -70,154 +86,108 @@ exports.jambResolvers = {
             if (session.subjects.length !== 4) {
                 throw new apollo_server_express_1.ApolloError(`Exactly 4 subjects required, got ${session.subjects.length}`, 'VALIDATION_ERROR');
             }
+            const VALID_SUBJECTS = [
+                'mathematics', 'english-language', 'fine-arts', 'music', 'french', 'animal-husbandry', 'insurance', 'chemistry',
+                'physics', 'yoruba', 'biology', 'geography', 'literature-in-english', 'economics', 'commerce',
+                'accounts-principles-of-accounts', 'government', 'igbo', 'christian-religious-knowledge', 'agricultural-science',
+                'islamic-religious-knowledge', 'history', 'civic-education', 'further-mathematics', 'arabic', 'home-economics',
+                'hausa', 'book-keeping', 'data-processing', 'catering-craft-practice', 'computer-studies', 'marketing',
+                'physical-education', 'office-practice', 'technical-drawing', 'food-and-nutrition', 'home-management'
+            ];
             const subjectQuestions = yield Promise.all(session.subjects.map((subject) => __awaiter(void 0, void 0, void 0, function* () {
-                console.log(`Original subject from session: ${subject}`);
-                const normalizedSubject = subject.replace(/\s+/g, '-').toLowerCase();
-                const VALID_SUBJECTS = [
-                    'mathematics', 'english-language', 'fine-arts', 'music', 'french', 'animal-husbandry', 'insurance', 'chemistry',
-                    'physics', 'yoruba', 'biology', 'geography', 'literature-in-english', 'economics', 'commerce',
-                    'accounts-principles-of-accounts', 'government', 'igbo', 'christian-religious-knowledge', 'agricultural-science',
-                    'islamic-religious-knowledge', 'history', 'civic-education', 'further-mathematics', 'arabic', 'home-economics',
-                    'hausa', 'book-keeping', 'data-processing', 'catering-craft-practice', 'computer-studies', 'marketing',
-                    'physical-education', 'office-practice', 'technical-drawing', 'food-and-nutrition', 'home-management'
-                ];
+                const normalizedSubject = normalizeSubject(subject);
                 if (!VALID_SUBJECTS.includes(normalizedSubject)) {
                     throw new apollo_server_express_1.ApolloError(`Invalid subject: ${subject}. Valid subjects are: ${VALID_SUBJECTS.join(', ')}`, 'VALIDATION_ERROR');
                 }
-                console.log(`Normalized subject: ${normalizedSubject}`);
-                // Step 1: Fetch questions for the requested year
-                let dbQuestions = yield prisma.question.findMany({
+                console.log(`Processing subject: ${normalizedSubject}`);
+                const targetQuestions = normalizedSubject === 'english-language' ? 60 : 40;
+                // Step 1: Fetch questions for the specific year first
+                let validQuestions = yield prisma.question.findMany({
                     where: {
                         examType: 'jamb',
                         examSubject: normalizedSubject,
-                        examYear: session.examYear,
+                        examYear,
                     },
-                });
-                let validQuestions = dbQuestions.filter(q => {
+                    take: targetQuestions,
+                }).then(questions => questions.filter(q => {
                     const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
                     const requiresImage = q.question.toLowerCase().includes('diagram') ||
                         q.question.toLowerCase().includes('figure') ||
                         q.question.toLowerCase().includes('image');
                     const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
                     return hasValidOptions && hasImageIfRequired;
-                });
-                console.log(`Existing valid questions for ${normalizedSubject} in ${examYear}: ${validQuestions.length}`);
-                // Step 2: Handle 2025 by shuffling previous years if needed
-                if (examYear === '2025' && validQuestions.length < 50) {
-                    console.log(`Insufficient 2025 questions for ${normalizedSubject}, fetching from previous years...`);
-                    const previousYearsQuestions = yield prisma.question.findMany({
+                }));
+                console.log(`Valid questions for ${normalizedSubject} in ${examYear}: ${validQuestions.length}`);
+                // Step 2: Quickly fill gaps with other years if needed
+                if (validQuestions.length < targetQuestions) {
+                    console.log(`Insufficient questions (${validQuestions.length}/${targetQuestions}) for ${examYear}, fetching from other years...`);
+                    const remainingNeeded = targetQuestions - validQuestions.length;
+                    const otherYearsQuestions = yield prisma.question.findMany({
                         where: {
                             examType: 'jamb',
                             examSubject: normalizedSubject,
-                            examYear: { in: [...YEARS.filter(y => y !== '2025')] }, // Mutable array
+                            examYear: { not: examYear },
                         },
-                    });
-                    const validPreviousQuestions = previousYearsQuestions.filter(q => {
+                        take: remainingNeeded,
+                    }).then(questions => questions.filter(q => {
                         const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
                         const requiresImage = q.question.toLowerCase().includes('diagram') ||
                             q.question.toLowerCase().includes('figure') ||
                             q.question.toLowerCase().includes('image');
                         const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
                         return hasValidOptions && hasImageIfRequired;
-                    });
-                    console.log(`Valid questions from 2005-2024 for ${normalizedSubject}: ${validPreviousQuestions.length}`);
-                    if (validPreviousQuestions.length < 50) {
-                        try {
-                            const fetchedQuestions = yield (0, fetch_1.fetchMyschoolQuestions)('jamb', normalizedSubject, '2024', 50);
-                            console.log(`Fetched ${fetchedQuestions.length} questions from Myschool.ng for ${normalizedSubject} (2024)`);
-                            yield prisma.question.createMany({
-                                data: fetchedQuestions,
-                                skipDuplicates: true,
-                            });
-                            const updatedPreviousQuestions = yield prisma.question.findMany({
-                                where: {
-                                    examType: 'jamb',
-                                    examSubject: normalizedSubject,
-                                    examYear: { in: [...YEARS.filter(y => y !== '2025')] }, // Mutable array
-                                },
-                            });
-                            validPreviousQuestions.push(...updatedPreviousQuestions.filter(q => {
-                                const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
-                                const requiresImage = q.question.toLowerCase().includes('diagram') ||
-                                    q.question.toLowerCase().includes('figure') ||
-                                    q.question.toLowerCase().includes('image');
-                                const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
-                                return hasValidOptions && hasImageIfRequired && !validPreviousQuestions.some(vq => vq.id === q.id);
-                            }));
-                            console.log(`Updated valid questions from 2005-2024 for ${normalizedSubject}: ${validPreviousQuestions.length}`);
-                        }
-                        catch (myschoolError) {
-                            console.error(`Myschool fetch failed for ${normalizedSubject} (2024): ${myschoolError.message}`);
-                        }
-                    }
-                    const shuffledPreviousQuestions = shuffleArray(validPreviousQuestions).slice(0, 50);
-                    if (shuffledPreviousQuestions.length >= 50) {
-                        const questionsFor2025 = shuffledPreviousQuestions.map((q, index) => (Object.assign(Object.assign({}, q), { id: `2025-${normalizedSubject}-${index}-${Date.now()}`, examYear: '2025' })));
-                        yield prisma.question.createMany({
-                            data: questionsFor2025,
-                            skipDuplicates: true,
-                        });
-                        console.log(`Saved ${questionsFor2025.length} shuffled questions for ${normalizedSubject} as 2025`);
-                        validQuestions = questionsFor2025;
-                    }
-                    else {
-                        console.warn(`Only ${validPreviousQuestions.length} valid questions available for ${normalizedSubject}`);
-                    }
+                    }));
+                    validQuestions = [
+                        ...validQuestions,
+                        ...otherYearsQuestions.filter(q => !validQuestions.some(vq => vq.id === q.id)),
+                    ].slice(0, targetQuestions);
+                    console.log(`After adding from other years: ${validQuestions.length}`);
                 }
-                // Step 3: Fetch for non-2025 years if needed
-                if (examYear !== '2025' && validQuestions.length < 50) {
-                    console.log(`Insufficient valid questions for ${normalizedSubject}, attempting to fetch...`);
-                    let fetchedQuestions = [];
+                // Step 3: Fetch from Myschool.ng only if still insufficient
+                if (validQuestions.length < targetQuestions) {
+                    console.log(`Still insufficient (${validQuestions.length}/${targetQuestions}), fetching from Myschool.ng...`);
                     try {
-                        fetchedQuestions = yield (0, fetch_1.fetchMyschoolQuestions)('jamb', normalizedSubject, examYear, 50);
-                        console.log(`Fetched ${fetchedQuestions.length} questions from Myschool.ng for ${normalizedSubject}`);
+                        const fetchedQuestions = yield (0, fetch_1.fetchMyschoolQuestions)('jamb', normalizedSubject, examYear);
+                        const neededQuestions = fetchedQuestions.slice(0, targetQuestions - validQuestions.length);
+                        console.log(`Fetched ${neededQuestions.length} questions from Myschool.ng for ${normalizedSubject}`);
                         yield prisma.question.createMany({
-                            data: fetchedQuestions,
+                            data: neededQuestions,
                             skipDuplicates: true,
                         });
+                        const newQuestions = yield prisma.question.findMany({
+                            where: {
+                                examType: 'jamb',
+                                examSubject: normalizedSubject,
+                                examYear,
+                            },
+                            take: targetQuestions - validQuestions.length,
+                        }).then(questions => questions.filter(q => {
+                            const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
+                            const requiresImage = q.question.toLowerCase().includes('diagram') ||
+                                q.question.toLowerCase().includes('figure') ||
+                                q.question.toLowerCase().includes('image');
+                            const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
+                            return hasValidOptions && hasImageIfRequired;
+                        }));
+                        validQuestions = [
+                            ...validQuestions,
+                            ...newQuestions.filter(q => !validQuestions.some(vq => vq.id === q.id)),
+                        ].slice(0, targetQuestions);
+                        console.log(`After Myschool fetch: ${validQuestions.length}`);
                     }
                     catch (myschoolError) {
                         console.error(`Myschool fetch failed for ${normalizedSubject}: ${myschoolError.message}`);
-                        try {
-                            fetchedQuestions = yield (0, fetch_1.fetchExternalQuestions)('jamb', normalizedSubject, examYear, 25, 50);
-                            console.log(`Fetched ${fetchedQuestions.length} questions from ALOC for ${normalizedSubject}`);
-                            yield prisma.question.createMany({
-                                data: fetchedQuestions,
-                                skipDuplicates: true,
-                            });
-                        }
-                        catch (alocError) {
-                            console.error(`ALOC fetch failed for ${normalizedSubject}: ${alocError.message}`);
-                        }
                     }
-                    dbQuestions = yield prisma.question.findMany({
-                        where: {
-                            examType: 'jamb',
-                            examSubject: normalizedSubject,
-                            examYear: session.examYear,
-                        },
-                    });
-                    const newValidQuestions = dbQuestions.filter(q => {
-                        const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
-                        const requiresImage = q.question.toLowerCase().includes('diagram') ||
-                            q.question.toLowerCase().includes('figure') ||
-                            q.question.toLowerCase().includes('image');
-                        const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
-                        return hasValidOptions && hasImageIfRequired;
-                    });
-                    validQuestions.push(...newValidQuestions.filter(q => !validQuestions.some(vq => vq.id === q.id)));
-                    console.log(`Updated valid questions for ${normalizedSubject} after fetch: ${validQuestions.length}`);
                 }
-                // Step 4: Finalize questions
-                const finalQuestions = validQuestions.slice(0, 50);
-                if (finalQuestions.length < 50) {
-                    throw new apollo_server_express_1.ApolloError(`Not enough valid questions for ${normalizedSubject}: got ${finalQuestions.length} after fetch attempts`, 'INSUFFICIENT_DATA');
+                // Step 4: Finalize with exact count
+                const finalQuestions = shuffleArray(validQuestions).slice(0, targetQuestions);
+                if (finalQuestions.length < targetQuestions) {
+                    console.warn(`Warning: Only ${finalQuestions.length}/${targetQuestions} questions available for ${normalizedSubject}`);
                 }
-                console.log(`Final valid questions for ${normalizedSubject}: ${finalQuestions.length}`);
-                const shuffledQuestions = shuffleArray(finalQuestions);
+                console.log(`Final questions for ${normalizedSubject}: ${finalQuestions.length}`);
                 return {
-                    subject: normalizedSubject,
-                    questions: shuffledQuestions.map(q => {
+                    subject: formatSubjectForFrontend(normalizedSubject),
+                    questions: finalQuestions.map(q => {
                         var _a, _b;
                         return ({
                             id: q.id,
@@ -229,7 +199,7 @@ exports.jambResolvers = {
                     }),
                 };
             })));
-            console.log(`Total questions fetched: ${subjectQuestions.reduce((sum, sq) => sum + sq.questions.length, 0)}`);
+            console.log(`Total questions selected for session: ${subjectQuestions.reduce((sum, sq) => sum + sq.questions.length, 0)}`);
             return subjectQuestions;
         }),
         me: (_, __, context) => __awaiter(void 0, void 0, void 0, function* () {
@@ -341,14 +311,15 @@ exports.jambResolvers = {
         startJambExam: (_1, _a, context_1) => __awaiter(void 0, [_1, _a, context_1], void 0, function* (_, { subjects, examYear }, context) {
             var _b;
             const studentId = authMiddleware(context);
-            const trimmedSubjects = subjects.map(s => s.trim().toLowerCase().replace(/\s+/g, '-'));
-            if (trimmedSubjects.length !== 4)
-                throw new apollo_server_express_1.ApolloError('Exactly 4 subjects required', 'VALIDATION_ERROR');
-            if (!trimmedSubjects.includes('english-language'))
+            const normalizedSubjects = subjects.map(normalizeSubject);
+            const uniqueSubjects = new Set(normalizedSubjects);
+            if (uniqueSubjects.size !== 4)
+                throw new apollo_server_express_1.ApolloError('Exactly 4 unique subjects required', 'VALIDATION_ERROR');
+            if (!uniqueSubjects.has('english-language'))
                 throw new apollo_server_express_1.ApolloError('English Language is compulsory', 'VALIDATION_ERROR');
             if (!YEARS.includes(examYear))
                 throw new apollo_server_express_1.ApolloError(`Invalid year: ${examYear}`, 'VALIDATION_ERROR');
-            const validSubjects = [
+            const VALID_SUBJECTS = [
                 'mathematics', 'english-language', 'fine-arts', 'music', 'french', 'animal-husbandry', 'insurance', 'chemistry',
                 'physics', 'yoruba', 'biology', 'geography', 'literature-in-english', 'economics', 'commerce',
                 'accounts-principles-of-accounts', 'government', 'igbo', 'christian-religious-knowledge', 'agricultural-science',
@@ -356,12 +327,12 @@ exports.jambResolvers = {
                 'hausa', 'book-keeping', 'data-processing', 'catering-craft-practice', 'computer-studies', 'marketing',
                 'physical-education', 'office-practice', 'technical-drawing', 'food-and-nutrition', 'home-management'
             ];
-            const invalidSubjects = trimmedSubjects.filter(sub => !validSubjects.includes(sub));
+            const invalidSubjects = Array.from(uniqueSubjects).filter(sub => !VALID_SUBJECTS.includes(sub));
             if (invalidSubjects.length > 0)
                 throw new apollo_server_express_1.ApolloError(`Invalid subjects: ${invalidSubjects.join(', ')}`, 'VALIDATION_ERROR');
             const newSession = yield prisma.jambExamSession.create({
                 data: {
-                    subjects: trimmedSubjects,
+                    subjects: Array.from(uniqueSubjects),
                     examYear,
                     startTime: new Date(),
                     isCompleted: false,
@@ -370,7 +341,7 @@ exports.jambResolvers = {
             });
             return {
                 id: newSession.id,
-                subjects: newSession.subjects,
+                subjects: newSession.subjects.map(formatSubjectForFrontend),
                 startTime: newSession.startTime.toISOString(),
                 endTime: ((_b = newSession.endTime) === null || _b === void 0 ? void 0 : _b.toISOString()) || null,
                 isCompleted: newSession.isCompleted,
@@ -390,10 +361,45 @@ exports.jambResolvers = {
                 throw new apollo_server_express_1.ApolloError('Unauthorized access to session', 'FORBIDDEN');
             if (session.isCompleted)
                 throw new apollo_server_express_1.ApolloError('JAMB session already completed', 'INVALID_STATE');
-            const allSubjects = session.subjects;
-            const questions = yield prisma.question.findMany({
-                where: { examType: 'jamb', examSubject: { in: allSubjects }, examYear: session.examYear },
+            const allSubjects = session.subjects.map(normalizeSubject);
+            const targetCounts = allSubjects.map(subject => ({
+                subject,
+                count: subject === 'english-language' ? 60 : 40,
+            }));
+            // Fetch questions used in this session (based on what fetchJambSubjectQuestions would return)
+            const questionsBySubject = yield Promise.all(targetCounts.map((_a) => __awaiter(void 0, [_a], void 0, function* ({ subject, count }) {
+                let questions = yield prisma.question.findMany({
+                    where: { examType: 'jamb', examSubject: subject, examYear: session.examYear },
+                    take: count,
+                }).then(qs => qs.filter(q => {
+                    const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
+                    const requiresImage = q.question.toLowerCase().includes('diagram') ||
+                        q.question.toLowerCase().includes('figure') ||
+                        q.question.toLowerCase().includes('image');
+                    const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
+                    return hasValidOptions && hasImageIfRequired;
+                }));
+                if (questions.length < count) {
+                    const additionalQuestions = yield prisma.question.findMany({
+                        where: { examType: 'jamb', examSubject: subject, examYear: { not: session.examYear } },
+                        take: count - questions.length,
+                    }).then(qs => qs.filter(q => {
+                        const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
+                        const requiresImage = q.question.toLowerCase().includes('diagram') ||
+                            q.question.toLowerCase().includes('figure') ||
+                            q.question.toLowerCase().includes('image');
+                        const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
+                        return hasValidOptions && hasImageIfRequired;
+                    }));
+                    questions = [...questions, ...additionalQuestions].slice(0, count);
+                }
+                return { subject, questions };
+            })));
+            const questionMap = new Map();
+            questionsBySubject.forEach(({ questions }) => {
+                questions.forEach(q => questionMap.set(q.id, { answer: q.answer, options: q.options }));
             });
+            // Store or update answers
             if (answers && answers.length > 0) {
                 yield prisma.$transaction(answers.map(({ questionId, answer }) => prisma.answer.upsert({
                     where: { sessionId_questionId: { sessionId, questionId } },
@@ -401,14 +407,34 @@ exports.jambResolvers = {
                     create: { sessionId, questionId, answer },
                 })));
             }
+            // Fetch all answers for scoring
             const sessionAnswers = yield prisma.answer.findMany({
                 where: { sessionId },
-                include: { question: true },
             });
+            const answerMap = new Map();
+            sessionAnswers.forEach(a => answerMap.set(a.questionId, a.answer));
+            // Calculate scores
+            const subjectScores = questionsBySubject.map(({ subject, questions }) => {
+                const score = questions.reduce((acc, q) => {
+                    const submittedAnswer = answerMap.get(q.id);
+                    if (!submittedAnswer)
+                        return acc; // No answer submitted, no points
+                    const correctAnswer = q.answer;
+                    if (!correctAnswer)
+                        return acc; // No correct answer defined, no points
+                    // Handle both letter-based (a, b, c, d) and text-based answers
+                    const submittedOptionText = ['a', 'b', 'c', 'd'].includes(submittedAnswer.toLowerCase())
+                        ? q.options[['a', 'b', 'c', 'd'].indexOf(submittedAnswer.toLowerCase())] || submittedAnswer
+                        : submittedAnswer;
+                    return acc + (submittedOptionText === correctAnswer ? 2 : 0);
+                }, 0);
+                return { subject, score, questionCount: questions.length };
+            });
+            // Update scores in the database
             const subjectRecords = yield prisma.subject.findMany({
                 where: { name: { in: allSubjects }, examType: 'jamb' },
             });
-            let subjectMap = new Map(subjectRecords.map(s => [s.name.toLowerCase(), s.id]));
+            const subjectMap = new Map(subjectRecords.map(s => [normalizeSubject(s.name), s.id]));
             const missingSubjects = allSubjects.filter(subject => !subjectMap.has(subject));
             if (missingSubjects.length > 0) {
                 const newSubjects = yield prisma.$transaction(missingSubjects.map(subject => prisma.subject.upsert({
@@ -416,18 +442,12 @@ exports.jambResolvers = {
                     update: {},
                     create: { name: subject, examType: 'jamb' },
                 })));
-                newSubjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s.id));
+                newSubjects.forEach(s => subjectMap.set(normalizeSubject(s.name), s.id));
             }
-            const subjectScores = allSubjects.map(subject => {
-                const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 50);
-                const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
-                const score = subjectAnswers.reduce((acc, { question, answer }) => {
-                    const submittedOptionText = ['a', 'b', 'c', 'd'].includes(answer.toLowerCase())
-                        ? question.options[['a', 'b', 'c', 'd'].indexOf(answer.toLowerCase())]
-                        : answer;
-                    return acc + (question.answer === submittedOptionText ? 2 : 0);
-                }, 0);
-                return {
+            yield prisma.$transaction(subjectScores.map(({ subject, score }) => prisma.score.upsert({
+                where: { jambSessionId_examSubject: { jambSessionId: sessionId, examSubject: subject } },
+                update: { score },
+                create: {
                     examType: 'jamb',
                     examSubject: subject,
                     subjectId: subjectMap.get(subject),
@@ -435,13 +455,9 @@ exports.jambResolvers = {
                     score,
                     date: new Date(),
                     jambSessionId: sessionId,
-                };
-            });
-            yield prisma.$transaction(subjectScores.map(score => prisma.score.upsert({
-                where: { jambSessionId_examSubject: { jambSessionId: sessionId, examSubject: score.examSubject } },
-                update: { score: score.score },
-                create: score,
+                },
             })));
+            // Mark session as completed
             const updatedSession = yield prisma.jambExamSession.update({
                 where: { id: sessionId },
                 data: { isCompleted: true, endTime: new Date() },
@@ -461,11 +477,12 @@ exports.jambResolvers = {
             timeSpent += `${seconds}s`;
             return {
                 sessionId,
-                subjectScores: updatedSession.scores.map(score => ({
-                    examSubject: score.examSubject,
-                    score: score.score,
+                subjectScores: subjectScores.map(({ subject, score, questionCount }) => ({
+                    examSubject: formatSubjectForFrontend(subject),
+                    score,
+                    questionCount,
                 })),
-                totalScore, // Max 400 (50 × 2 × 4)
+                totalScore, // Max 400 (60 × 2 + 40 × 2 × 3 = 120 + 240)
                 isCompleted: updatedSession.isCompleted,
                 timeSpent: timeSpent.trim(),
             };

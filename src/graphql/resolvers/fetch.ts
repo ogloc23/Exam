@@ -80,7 +80,6 @@ const API_SUBJECT_MAP: { [key: string]: string } = {
   'islamic-religious-knowledge': 'irk',
   'agricultural-science': 'agriculture',
   'further-mathematics': 'further-maths',
-  // Add mappings as needed based on ALOC API requirements
 };
 
 const MY_SCHOOL_SUBJECT_MAP: { [key: string]: string } = {
@@ -91,7 +90,6 @@ const MY_SCHOOL_SUBJECT_MAP: { [key: string]: string } = {
   'islamic-religious-knowledge': 'islamic-studies',
   'agricultural-science': 'agricultural-science',
   'further-mathematics': 'further-mathematics',
-  // Add mappings as needed based on Myschool.ng URL slugs
 };
 
 const apiClient = axios.create({
@@ -242,8 +240,7 @@ async function fetchExternalQuestions(
 async function fetchMyschoolQuestions(
   examType: ExamType,
   examSubject: ExamSubject,
-  examYear: ExamYear,
-  totalTarget: number = 50 
+  examYear: ExamYear
 ): Promise<Question[]> {
   const examTypeLower = examType.toLowerCase() as ExamType;
   if (!EXAM_TYPES.includes(examTypeLower)) throw new ApolloError('Invalid exam type', 'VALIDATION_ERROR');
@@ -286,7 +283,7 @@ async function fetchMyschoolQuestions(
         const answerLink = $(elem).find('a.btn-outline-danger').attr('href');
         const imageUrl = $(elem).find('.media-body div.mb-4 img').attr('src') || $(elem).find('.question-desc img').attr('src') || undefined;
 
-        if (questionText && options.length >= 2 && allQuestions.length < totalTarget) {
+        if (questionText && options.length >= 2) {
           const questionId = `${examYear}-${dbSubject}-${page}-${i}`;
           if (!seenIds.has(questionId)) {
             allQuestions.push({
@@ -305,9 +302,9 @@ async function fetchMyschoolQuestions(
         }
       });
 
-      console.log(`Scraped ${allQuestions.length} ${examSubject} questions so far`);
+      console.log(`Scraped ${allQuestions.length} ${examSubject} questions so far from page ${page}`);
       const nextLink = $('.pagination .page-item a[rel="next"]').attr('href');
-      if (nextLink && allQuestions.length < totalTarget) {
+      if (nextLink) {
         page++;
         const nextPageUrl = nextLink.startsWith('http') ? nextLink : `https://myschool.ng${nextLink}`;
         await fetchPage(nextPageUrl);
@@ -373,25 +370,25 @@ async function fetchMyschoolQuestions(
         create: { ...question },
       });
     }
-    console.log(`Saved ${allQuestions.length} ${examSubject} questions`);
+    console.log(`Saved ${allQuestions.length} ${examSubject} questions to database`);
   } catch (error: any) {
     console.error(`Failed to save ${examSubject} questions: ${error.message}`);
   }
 
+  console.log(`Total fetched from Myschool.ng: ${allQuestions.length} questions for ${examSubject}`);
   return allQuestions;
 }
 
 async function fetchAllSubjectsQuestions(
   examType: ExamType,
-  examYear: ExamYear,
-  totalTargetPerSubject: number = 50
+  examYear: ExamYear
 ): Promise<{ subject: string; questions: Question[] }[]> {
   const allSubjectsQuestions: { subject: string; questions: Question[] }[] = [];
 
   for (const subject of VALID_SUBJECTS) {
     console.log(`Starting fetch for ${subject} ${examYear}`);
     try {
-      const subjectQuestions = await fetchMyschoolQuestions(examType, subject, examYear, totalTargetPerSubject);
+      const subjectQuestions = await fetchMyschoolQuestions(examType, subject, examYear);
       allSubjectsQuestions.push({ subject, questions: subjectQuestions });
       console.log(`Completed fetch for ${subject}: ${subjectQuestions.length} questions`);
     } catch (error: any) {
@@ -442,7 +439,6 @@ export const fetchResolvers = {
       { examType, examYear }: { examType: ExamType; examYear: ExamYear }
     ) => {
       const subjectQuestions = await fetchAllSubjectsQuestions(examType, examYear);
-      // Flatten for GraphQL schema compatibility if needed
       const flatQuestions = subjectQuestions.flatMap(sq => sq.questions);
       return flatQuestions;
     },
@@ -531,14 +527,12 @@ export const fetchResolvers = {
         session.subjects.map(async (subject) => {
           console.log(`Original subject from session: ${subject}`);
           
-          // Normalize subject to match VALID_SUBJECTS
           const normalizedSubject = subject.replace(/\s+/g, '-').toLowerCase() as ExamSubject;
           if (!VALID_SUBJECTS.includes(normalizedSubject)) {
             throw new ApolloError(`Invalid subject: ${subject}. Valid subjects are: ${VALID_SUBJECTS.join(', ')}`, 'VALIDATION_ERROR');
           }
           console.log(`Normalized subject: ${normalizedSubject}`);
 
-          // Step 1: Check existing questions
           let existingQuestionsRaw = await prisma.question.findMany({
             where: {
               examType: 'jamb',
@@ -556,7 +550,6 @@ export const fetchResolvers = {
           }));
           console.log(`Existing questions for ${normalizedSubject}: ${existingQuestions.length}`);
 
-          // Step 2: Fetch if insufficient
           if (existingQuestions.length < 40) {
             let fetchedQuestions: Question[] = [];
             try {
@@ -576,8 +569,7 @@ export const fetchResolvers = {
                 fetchedQuestions = await fetchMyschoolQuestions(
                   'jamb',
                   normalizedSubject,
-                  examYear,
-                  40
+                  examYear
                 );
                 console.log(`Fetched ${fetchedQuestions.length} questions from Myschool.ng for ${normalizedSubject}`);
                 await prisma.question.createMany({
@@ -589,7 +581,6 @@ export const fetchResolvers = {
               }
             }
 
-            // Refresh after fetch attempts
             existingQuestionsRaw = await prisma.question.findMany({
               where: {
                 examType: 'jamb',
@@ -608,7 +599,6 @@ export const fetchResolvers = {
             console.log(`Updated questions for ${normalizedSubject} after fetch: ${existingQuestions.length}`);
           }
 
-          // Step 3: Fetch 20 questions
           const dbQuestionsRaw = await prisma.question.findMany({
             where: {
               examType: 'jamb',
@@ -627,7 +617,6 @@ export const fetchResolvers = {
           }));
           console.log(`Final questions fetched for ${normalizedSubject}: ${dbQuestions.length}`);
 
-          // Step 4: Validate
           if (dbQuestions.length < 20) {
             throw new ApolloError(`Not enough questions for ${normalizedSubject}: got ${dbQuestions.length} after fetch attempts`, 'INSUFFICIENT_DATA');
           }
