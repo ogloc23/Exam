@@ -10,7 +10,6 @@ const prisma = new PrismaClient({
 });
 const JAMB_TIME_LIMIT = 5400 * 1000; // 90 minutes in milliseconds
 
-// Define YEARS statically from 2025 to 2005
 const YEARS = [
   '2025', '2024', '2023', '2022', '2021', '2020', '2019', '2018', '2017', '2016',
   '2015', '2014', '2013', '2012', '2011', '2010', '2009', '2008', '2007', '2006', '2005'
@@ -62,6 +61,11 @@ export const jambResolvers = {
       }
       const examYear: ExamYear = session.examYear as ExamYear;
 
+      // Validate exactly 4 subjects
+      if (session.subjects.length !== 4) {
+        throw new ApolloError(`Exactly 4 subjects required, got ${session.subjects.length}`, 'VALIDATION_ERROR');
+      }
+
       const subjectQuestions = await Promise.all(
         session.subjects.map(async (subject) => {
           console.log(`Original subject from session: ${subject}`);
@@ -98,39 +102,39 @@ export const jambResolvers = {
           });
           console.log(`Existing valid questions for ${normalizedSubject}: ${validQuestions.length}`);
 
-          if (validQuestions.length < 40) {
+          if (validQuestions.length < 50) { // Updated to 50
             console.log(`Insufficient valid questions for ${normalizedSubject}, attempting to fetch...`);
             let fetchedQuestions: Question[] = [];
 
             try {
-              fetchedQuestions = await fetchExternalQuestions(
+              fetchedQuestions = await fetchMyschoolQuestions(
                 'jamb' as ExamType,
                 normalizedSubject,
                 examYear,
-                40,
-                80
+                50 // Target 50 questions
               );
-              console.log(`Fetched ${fetchedQuestions.length} questions from ALOC for ${normalizedSubject}`);
+              console.log(`Fetched ${fetchedQuestions.length} questions from Myschool.ng for ${normalizedSubject}`);
               await prisma.question.createMany({
                 data: fetchedQuestions,
                 skipDuplicates: true,
               });
-            } catch (alocError: any) {
-              console.error(`ALOC fetch failed for ${normalizedSubject}: ${alocError.message}`);
+            } catch (myschoolError: any) {
+              console.error(`Myschool fetch failed for ${normalizedSubject}: ${myschoolError.message}`);
               try {
-                fetchedQuestions = await fetchMyschoolQuestions(
+                fetchedQuestions = await fetchExternalQuestions(
                   'jamb' as ExamType,
                   normalizedSubject,
                   examYear,
-                  80
+                  25, // Batch size
+                  50  // Total target
                 );
-                console.log(`Fetched ${fetchedQuestions.length} questions from Myschool.ng for ${normalizedSubject}`);
+                console.log(`Fetched ${fetchedQuestions.length} questions from ALOC for ${normalizedSubject}`);
                 await prisma.question.createMany({
                   data: fetchedQuestions,
                   skipDuplicates: true,
                 });
-              } catch (myschoolError: any) {
-                console.error(`Myschool fetch failed for ${normalizedSubject}: ${myschoolError.message}`);
+              } catch (alocError: any) {
+                console.error(`ALOC fetch failed for ${normalizedSubject}: ${alocError.message}`);
               }
             }
 
@@ -153,8 +157,8 @@ export const jambResolvers = {
             console.log(`Updated valid questions for ${normalizedSubject} after fetch: ${validQuestions.length}`);
           }
 
-          const finalQuestions = validQuestions.slice(0, 40);
-          if (finalQuestions.length < 40) {
+          const finalQuestions = validQuestions.slice(0, 50); // Updated to 50
+          if (finalQuestions.length < 50) {
             throw new ApolloError(`Not enough valid questions for ${normalizedSubject}: got ${finalQuestions.length} after fetch attempts`, 'INSUFFICIENT_DATA');
           }
           console.log(`Final valid questions for ${normalizedSubject}: ${finalQuestions.length}`);
@@ -166,13 +170,14 @@ export const jambResolvers = {
               id: q.id,
               question: q.question,
               options: q.options,
-              answer: q.answer ?? undefined, // Use answer instead of answerUrl
+              answer: q.answer ?? undefined,
               imageUrl: q.imageUrl ?? undefined,
             })),
           };
         })
       );
 
+      console.log(`Total questions fetched: ${subjectQuestions.reduce((sum, sq) => sum + sq.questions.length, 0)}`);
       return subjectQuestions;
     },
 
@@ -199,6 +204,7 @@ export const jambResolvers = {
       _: any,
       { input }: { input: { firstName: string; lastName: string; userName: string; email?: string; phoneNumber?: string; password: string; studentType?: string } }
     ) => {
+      // Unchanged, keeping as is
       try {
         const { firstName, lastName, userName, email, phoneNumber, password, studentType } = input;
 
@@ -270,6 +276,7 @@ export const jambResolvers = {
     },
 
     loginStudent: async (_: any, { input }: { input: { identifier: string; password: string } }) => {
+      // Unchanged, keeping as is
       try {
         const { identifier, password } = input;
 
@@ -326,8 +333,12 @@ export const jambResolvers = {
       if (!YEARS.includes(examYear as any)) throw new ApolloError(`Invalid year: ${examYear}`, 'VALIDATION_ERROR');
 
       const validSubjects = [
-        'english-language', 'mathematics', 'physics', 'chemistry', 'biology', 'literature-in-english',
-        'government', 'economics', 'christian-religious-knowledge', 'agricultural-science'
+        'mathematics', 'english-language', 'fine-arts', 'music', 'french', 'animal-husbandry', 'insurance', 'chemistry',
+        'physics', 'yoruba', 'biology', 'geography', 'literature-in-english', 'economics', 'commerce',
+        'accounts-principles-of-accounts', 'government', 'igbo', 'christian-religious-knowledge', 'agricultural-science',
+        'islamic-religious-knowledge', 'history', 'civic-education', 'further-mathematics', 'arabic', 'home-economics',
+        'hausa', 'book-keeping', 'data-processing', 'catering-craft-practice', 'computer-studies', 'marketing',
+        'physical-education', 'office-practice', 'technical-drawing', 'food-and-nutrition', 'home-management'
       ];
       const invalidSubjects = trimmedSubjects.filter(sub => !validSubjects.includes(sub));
       if (invalidSubjects.length > 0) throw new ApolloError(`Invalid subjects: ${invalidSubjects.join(', ')}`, 'VALIDATION_ERROR');
@@ -409,14 +420,14 @@ export const jambResolvers = {
       }
 
       const subjectScores = allSubjects.map(subject => {
-        const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 40);
+        const subjectQuestions = questions.filter(q => q.examSubject === subject).slice(0, 50); // Updated to 50
         const subjectAnswers = sessionAnswers.filter(a => subjectQuestions.some(q => q.id === a.questionId));
 
         const score = subjectAnswers.reduce((acc, { question, answer }) => {
           const submittedOptionText = ['a', 'b', 'c', 'd'].includes(answer.toLowerCase())
             ? question.options[['a', 'b', 'c', 'd'].indexOf(answer.toLowerCase())]
             : answer;
-          return acc + (question.answer === submittedOptionText ? 1 : 0);
+          return acc + (question.answer === submittedOptionText ? 2 : 0); // 2 points per correct answer
         }, 0);
 
         return {
@@ -463,7 +474,7 @@ export const jambResolvers = {
           examSubject: score.examSubject,
           score: score.score,
         })),
-        totalScore,
+        totalScore, // Max 400 (50 × 2 × 4)
         isCompleted: updatedSession.isCompleted,
         timeSpent: timeSpent.trim(),
       };
