@@ -13,10 +13,10 @@ export const competitionResolvers = {
         const targetDate = date ? new Date(date) : new Date();
         const startOfDay = new Date(new Date(targetDate).setHours(0, 0, 0, 0));
         const endOfDay = new Date(new Date(targetDate).setHours(23, 59, 59, 999));
-
+        
         // Find all completed competition exam sessions for the given date
         const competitionSessions = await prisma.jambExamSession.findMany({
-          where: { 
+          where: {
             isCompetition: true,
             isCompleted: true,
             startTime: {
@@ -35,46 +35,50 @@ export const competitionResolvers = {
               }
             },
             scores: true
-          },
-          orderBy: {
-            startTime: 'asc' // Default ordering until we calculate total scores
           }
         });
-
+        
         if (competitionSessions.length === 0) {
           return []; // No competitions found for this date
         }
-
-        // Calculate total score for each session and sort
-        const rankedLeaderboard = competitionSessions
-        .map(session => ({
+        
+        // Calculate total score for each session
+        const sessionsWithTotalScores = competitionSessions.map(session => ({
           studentId: session.studentId,
           student: session.student,
-          score: session.scores.reduce((sum, score) => sum + score.score, 0), // Total score
-          submittedAt: session.endTime || session.startTime, // Use endTime if available
+          score: session.scores.reduce((sum, score) => sum + score.score, 0),
+          submittedAt: session.endTime || session.startTime,
           subjectScores: session.scores.map(score => ({
             subject: score.examSubject,
             score: score.score
           }))
-        }))
-        .sort((a, b) => b.score - a.score) // Sort by total score descending
-        .reduce((acc, session) => {
-          if (!acc.has(session.studentId)) {
-            acc.set(session.studentId, session); // Store only the highest-scoring session per student
+        }));
+        
+        // Group sessions by student ID
+        const studentMap = new Map();
+        
+        // For each session, keep only the highest score per student
+        sessionsWithTotalScores.forEach(session => {
+          const existingSession = studentMap.get(session.studentId);
+          
+          // If we don't have this student yet, or if this score is higher than previous best
+          if (!existingSession || session.score > existingSession.score) {
+            studentMap.set(session.studentId, session);
           }
-          return acc;
-        }, new Map())
-        .values(); // Get the unique highest-scoring sessions
-      
-      // Convert to array and assign ranks
-      const finalLeaderboard = [...rankedLeaderboard].map((entry, index) => ({
-        ...entry,
-        rank: index + 1
-      }));
-      
-      console.log(finalLeaderboard);
-      
-
+        });
+        
+        // Convert map back to array
+        const bestAttempts = Array.from(studentMap.values());
+        
+        // Sort by score in descending order
+        const sortedLeaderboard = bestAttempts.sort((a, b) => b.score - a.score);
+        
+        // Assign ranks
+        const finalLeaderboard = sortedLeaderboard.map((entry, index) => ({
+          ...entry,
+          rank: index + 1
+        }));
+        
         return finalLeaderboard;
       } catch (error) {
         console.error('Error fetching competition leaderboard:', error);
