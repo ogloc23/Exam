@@ -545,7 +545,6 @@ exports.fetchResolvers = {
                         id: q.id,
                         question: q.question,
                         options: q.options,
-                        answerUrl: q.answerUrl,
                         imageUrl: q.imageUrl,
                     })),
                 };

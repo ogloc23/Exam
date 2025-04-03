@@ -65,9 +65,9 @@ export const jambResolvers = {
 
     fetchJambSubjectQuestions: async (_: any, { sessionId }: { sessionId: number }, context: Context) => {
       const studentId = authMiddleware(context);
-      const session = await prisma.jambExamSession.findUnique({ 
+      const session = await prisma.jambExamSession.findUnique({
         where: { id: sessionId },
-        select: { id: true, studentId: true, subjects: true, examYear: true, isCompleted: true } 
+        select: { id: true, studentId: true, subjects: true, examYear: true, isCompleted: true }
       });
       if (!session) throw new ApolloError('Session not found', 'NOT_FOUND');
       if (session.studentId !== studentId) throw new ApolloError('Unauthorized access to session', 'FORBIDDEN');
@@ -109,13 +109,14 @@ export const jambResolvers = {
               examType: 'jamb',
               examSubject: normalizedSubject,
               examYear,
+              answer: { not: null },
             },
             take: targetQuestions,
           }).then(questions => questions.filter(q => {
             const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
-            const requiresImage = q.question.toLowerCase().includes('diagram') || 
-                                 q.question.toLowerCase().includes('figure') || 
-                                 q.question.toLowerCase().includes('image');
+            const requiresImage = q.question.toLowerCase().includes('diagram') ||
+              q.question.toLowerCase().includes('figure') ||
+              q.question.toLowerCase().includes('image');
             const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
             return hasValidOptions && hasImageIfRequired;
           }));
@@ -134,9 +135,9 @@ export const jambResolvers = {
               take: remainingNeeded,
             }).then(questions => questions.filter(q => {
               const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
-              const requiresImage = q.question.toLowerCase().includes('diagram') || 
-                                   q.question.toLowerCase().includes('figure') || 
-                                   q.question.toLowerCase().includes('image');
+              const requiresImage = q.question.toLowerCase().includes('diagram') ||
+                q.question.toLowerCase().includes('figure') ||
+                q.question.toLowerCase().includes('image');
               const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
               return hasValidOptions && hasImageIfRequired;
             }));
@@ -173,9 +174,9 @@ export const jambResolvers = {
                 take: targetQuestions - validQuestions.length,
               }).then(questions => questions.filter(q => {
                 const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
-                const requiresImage = q.question.toLowerCase().includes('diagram') || 
-                                     q.question.toLowerCase().includes('figure') || 
-                                     q.question.toLowerCase().includes('image');
+                const requiresImage = q.question.toLowerCase().includes('diagram') ||
+                  q.question.toLowerCase().includes('figure') ||
+                  q.question.toLowerCase().includes('image');
                 const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
                 return hasValidOptions && hasImageIfRequired;
               }));
@@ -205,6 +206,152 @@ export const jambResolvers = {
               answer: q.answer ?? undefined,
               imageUrl: q.imageUrl ?? undefined,
             })),
+          };
+        })
+      );
+
+      console.log(`Total questions selected for session: ${subjectQuestions.reduce((sum, sq) => sum + sq.questions.length, 0)}`);
+      return subjectQuestions;
+    },
+
+    fetchJambCompetitionQuestions: async (_: any, { sessionId }: { sessionId: number }, context: Context) => {
+      const studentId = authMiddleware(context);
+      const session = await prisma.jambExamSession.findUnique({
+        where: { id: sessionId },
+        select: { id: true, studentId: true, subjects: true, examYear: true, isCompleted: true }
+      });
+      if (!session) throw new ApolloError('Session not found', 'NOT_FOUND');
+      if (session.studentId !== studentId) throw new ApolloError('Unauthorized access to session', 'FORBIDDEN');
+      if (session.isCompleted) throw new ApolloError('Session already completed', 'INVALID_STATE');
+
+      console.log(`Processing session ${sessionId} with subjects: ${session.subjects}, year: ${session.examYear}`);
+
+      if (!YEARS.includes(session.examYear as any)) {
+        throw new ApolloError(`Invalid exam year: ${session.examYear}. Must be one of: ${YEARS.join(', ')}`, 'VALIDATION_ERROR');
+      }
+
+
+      const examYear: ExamYear = session.examYear as ExamYear;
+
+      if (session.subjects.length !== 4) {
+        throw new ApolloError(`Exactly 4 subjects required, got ${session.subjects.length}`, 'VALIDATION_ERROR');
+      }
+
+      const VALID_SUBJECTS: ExamSubject[] = [
+        'mathematics', 'english-language', 'fine-arts', 'music', 'french', 'animal-husbandry', 'insurance', 'chemistry',
+        'physics', 'yoruba', 'biology', 'geography', 'literature-in-english', 'economics', 'commerce',
+        'accounts-principles-of-accounts', 'government', 'igbo', 'christian-religious-knowledge', 'agricultural-science',
+        'islamic-religious-knowledge', 'history', 'civic-education', 'further-mathematics', 'arabic', 'home-economics',
+        'hausa', 'book-keeping', 'data-processing', 'catering-craft-practice', 'computer-studies', 'marketing',
+        'physical-education', 'office-practice', 'technical-drawing', 'food-and-nutrition', 'home-management'
+      ];
+
+      // Define the Question type
+      type Question = {
+        id: string;
+        examType: string;
+        examYear: string;
+        options: string[];
+        question: string;
+        imageUrl: string | null;
+        answer: string | null;
+        examSubject: string;
+        answerUrl: string | null;
+      };
+
+      const subjectQuestions = await Promise.all(
+        session.subjects.map(async (subject) => {
+          const normalizedSubject = normalizeSubject(subject);
+          if (!VALID_SUBJECTS.includes(normalizedSubject)) {
+            throw new ApolloError(`Invalid subject: ${subject}. Valid subjects are: ${VALID_SUBJECTS.join(', ')}`, 'VALIDATION_ERROR');
+          }
+          console.log(`Processing subject: ${normalizedSubject}`);
+
+          const targetQuestions = normalizedSubject === 'english-language' ? 60 : 40;
+
+          // Step 1: Fetch random questions using raw SQL
+          const rawQuestions = await prisma.$queryRaw`
+              SELECT * FROM "Question" 
+              WHERE "examType" = 'jamb' 
+              AND "examSubject" = ${normalizedSubject}
+              AND "answer" IS NOT NULL
+              ORDER BY RANDOM() 
+              LIMIT ${targetQuestions};
+            `;
+
+          // Cast and validate the raw query results
+          let validQuestions = (rawQuestions as Question[]).filter(q => {
+            const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
+            const requiresImage = q.question.toLowerCase().includes('diagram') ||
+              q.question.toLowerCase().includes('figure') ||
+              q.question.toLowerCase().includes('image');
+            const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
+            return hasValidOptions && hasImageIfRequired;
+          });
+
+          console.log(`Valid random questions for ${normalizedSubject}: ${validQuestions.length}`);
+
+          // Step 3: Fetch from Myschool.ng only if still insufficient
+          if (validQuestions.length < targetQuestions) {
+            console.log(`Still insufficient (${validQuestions.length}/${targetQuestions}), fetching from Myschool.ng...`);
+            try {
+              const fetchedQuestions = await fetchMyschoolQuestions(
+                'jamb' as ExamType,
+                normalizedSubject,
+                examYear
+              );
+              const neededQuestions = fetchedQuestions.slice(0, targetQuestions - validQuestions.length);
+              console.log(`Fetched ${neededQuestions.length} questions from Myschool.ng for ${normalizedSubject}`);
+
+              await prisma.question.createMany({
+                data: neededQuestions,
+                skipDuplicates: true,
+              });
+
+              const newQuestions = await prisma.question.findMany({
+                where: {
+                  examType: 'jamb',
+                  examSubject: normalizedSubject,
+                  examYear,
+                },
+                take: targetQuestions - validQuestions.length,
+              }).then(questions => questions.filter(q => {
+                const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
+                const requiresImage = q.question.toLowerCase().includes('diagram') ||
+                  q.question.toLowerCase().includes('figure') ||
+                  q.question.toLowerCase().includes('image');
+                const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
+                return hasValidOptions && hasImageIfRequired;
+              }));
+              validQuestions = [
+                ...validQuestions,
+                ...newQuestions.filter(q => !validQuestions.some(vq => vq.id === q.id)),
+              ].slice(0, targetQuestions);
+              console.log(`After Myschool fetch: ${validQuestions.length}`);
+            } catch (myschoolError: any) {
+              console.error(`Myschool fetch failed for ${normalizedSubject}: ${myschoolError.message}`);
+            }
+          }
+
+          // Step 4: Finalize with exact count
+          const finalQuestions = shuffleArray(validQuestions).slice(0, targetQuestions);
+          if (finalQuestions.length < targetQuestions) {
+            console.warn(`Warning: Only ${finalQuestions.length}/${targetQuestions} questions available for ${normalizedSubject}`);
+          }
+          console.log(`Final questions for ${normalizedSubject}: ${finalQuestions.length}`);
+
+          return {
+            subject: formatSubjectForFrontend(normalizedSubject),
+            questions: finalQuestions.map((q) => {
+              console.log(q.id)
+              return {
+                id: q.id,
+                question: q.question,
+                options: q.options,
+                answer: q.answer ?? undefined,
+                imageUrl: q.imageUrl ?? undefined,
+              }
+            }),
           };
         })
       );
@@ -353,7 +500,7 @@ export const jambResolvers = {
 
     startJambExam: async (
       _: any,
-      { subjects, examYear }: { subjects: string[]; examYear: string },
+      { subjects, examYear, isCompetition }: { subjects: string[]; examYear: string; isCompetition: boolean },
       context: Context
     ) => {
       const studentId = authMiddleware(context);
@@ -361,7 +508,8 @@ export const jambResolvers = {
       const uniqueSubjects = new Set(normalizedSubjects);
       if (uniqueSubjects.size !== 4) throw new ApolloError('Exactly 4 unique subjects required', 'VALIDATION_ERROR');
       if (!uniqueSubjects.has('english-language')) throw new ApolloError('English Language is compulsory', 'VALIDATION_ERROR');
-      if (!YEARS.includes(examYear as any)) throw new ApolloError(`Invalid year: ${examYear}`, 'VALIDATION_ERROR');
+      if (!isCompetition && !YEARS.includes(examYear as any)) throw new ApolloError(`Invalid year: ${examYear}`, 'VALIDATION_ERROR');
+
 
       const VALID_SUBJECTS: ExamSubject[] = [
         'mathematics', 'english-language', 'fine-arts', 'music', 'french', 'animal-husbandry', 'insurance', 'chemistry',
@@ -377,10 +525,11 @@ export const jambResolvers = {
       const newSession = await prisma.jambExamSession.create({
         data: {
           subjects: Array.from(uniqueSubjects),
-          examYear,
+          examYear: examYear ? examYear : String(new Date().getFullYear()),
           startTime: new Date(),
           isCompleted: false,
           studentId,
+          isCompetition: isCompetition ? isCompetition : false
         },
       });
 
@@ -397,7 +546,7 @@ export const jambResolvers = {
 
     finishJambExam: async (
       _: any,
-      { sessionId, answers }: { sessionId: number; answers?: { questionId: string; answer: string }[] },
+      { sessionId, answers, questionIds }: { sessionId: number; answers?: { questionId: string; answer: string }[], questionIds: string[] },
       context: Context
     ) => {
       const studentId = authMiddleware(context);
@@ -407,7 +556,7 @@ export const jambResolvers = {
       });
       if (!session) throw new ApolloError('Session not found', 'NOT_FOUND');
       if (session.studentId !== studentId) throw new ApolloError('Unauthorized access to session', 'FORBIDDEN');
-      if (session.isCompleted) throw new ApolloError('JAMB session already completed', 'INVALID_STATE');
+      // if (session.isCompleted) throw new ApolloError('JAMB session already completed', 'INVALID_STATE');
 
       const allSubjects = session.subjects.map(normalizeSubject);
       const targetCounts = allSubjects.map(subject => ({
@@ -423,9 +572,9 @@ export const jambResolvers = {
             take: count,
           }).then(qs => qs.filter(q => {
             const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
-            const requiresImage = q.question.toLowerCase().includes('diagram') || 
-                                 q.question.toLowerCase().includes('figure') || 
-                                 q.question.toLowerCase().includes('image');
+            const requiresImage = q.question.toLowerCase().includes('diagram') ||
+              q.question.toLowerCase().includes('figure') ||
+              q.question.toLowerCase().includes('image');
             const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
             return hasValidOptions && hasImageIfRequired;
           }));
@@ -436,9 +585,9 @@ export const jambResolvers = {
               take: count - questions.length,
             }).then(qs => qs.filter(q => {
               const hasValidOptions = q.options && q.options.length >= 2 && q.options.every(opt => opt.trim() !== '');
-              const requiresImage = q.question.toLowerCase().includes('diagram') || 
-                                   q.question.toLowerCase().includes('figure') || 
-                                   q.question.toLowerCase().includes('image');
+              const requiresImage = q.question.toLowerCase().includes('diagram') ||
+                q.question.toLowerCase().includes('figure') ||
+                q.question.toLowerCase().includes('image');
               const hasImageIfRequired = !requiresImage || (requiresImage && q.imageUrl);
               return hasValidOptions && hasImageIfRequired;
             }));
@@ -477,7 +626,7 @@ export const jambResolvers = {
 
       // Calculate scores
       const subjectScores = questionsBySubject.map(({ subject, questions }) => {
-        const score = questions.reduce((acc, q) => {
+        const correctAnswers = questions.reduce((acc, q) => {
           const submittedAnswer = answerMap.get(q.id);
           if (!submittedAnswer) return acc; // No answer submitted, no points
 
@@ -489,10 +638,25 @@ export const jambResolvers = {
             ? q.options[['a', 'b', 'c', 'd'].indexOf(submittedAnswer.toLowerCase())] || submittedAnswer
             : submittedAnswer;
 
-          return acc + (submittedOptionText === correctAnswer ? 2 : 0);
+          return acc + (submittedOptionText === correctAnswer ? 1 : 0);
         }, 0);
 
-        return { subject, score, questionCount: questions.length };
+        return { subject, correctAnswers, questionCount: questions.length };
+      });
+
+      // Calculate the total number of questions across all subjects
+      const totalQuestions = subjectScores.reduce((acc, { questionCount }) => acc + questionCount, 0);
+      const totalCorrectAnswers = subjectScores.reduce((acc, { correctAnswers }) => acc + correctAnswers, 0);
+
+      // Scale the score to a maximum of 400 points
+      const scaledTotalScore = Math.round((totalCorrectAnswers / totalQuestions) * 400);
+
+      // Calculate scaled scores for each subject
+      const scaledSubjectScores = subjectScores.map(({ subject, correctAnswers, questionCount }) => {
+        // Each subject's score is scaled proportionally to maintain the 400 total
+        const maxSubjectScore = Math.round((questionCount / totalQuestions) * 400);
+        const scaledScore = Math.round((correctAnswers / questionCount) * maxSubjectScore);
+        return { subject, score: scaledScore, questionCount };
       });
 
       // Update scores in the database
@@ -516,7 +680,7 @@ export const jambResolvers = {
       }
 
       await prisma.$transaction(
-        subjectScores.map(({ subject, score }) =>
+        scaledSubjectScores.map(({ subject, score }) =>
           prisma.score.upsert({
             where: { jambSessionId_examSubject: { jambSessionId: sessionId, examSubject: subject } },
             update: { score },
@@ -540,7 +704,21 @@ export const jambResolvers = {
         include: { scores: true },
       });
 
-      const totalScore = updatedSession.scores.reduce((sum, score) => sum + score.score, 0);
+      // Prepare answer feedback for requested questionIds
+      const questionDetails = await Promise.all(
+        questionIds.map(async (qid) => {
+          const questionData = questionMap.get(qid);
+          const studentAnswer = answerMap.get(qid) || null;
+
+          return {
+            questionId: qid,
+            correctAnswer: questionData?.answer || null,
+            studentAnswer,
+            isCorrect: studentAnswer === questionData?.answer
+          };
+        })
+      );
+
       const elapsedTime = new Date(updatedSession.endTime!).getTime() - new Date(session.startTime).getTime();
       const totalSeconds = Math.floor(elapsedTime / 1000);
       const hours = Math.floor(totalSeconds / 3600);
@@ -553,14 +731,15 @@ export const jambResolvers = {
 
       return {
         sessionId,
-        subjectScores: subjectScores.map(({ subject, score, questionCount }) => ({
+        subjectScores: scaledSubjectScores.map(({ subject, score, questionCount }) => ({
           examSubject: formatSubjectForFrontend(subject),
           score,
           questionCount,
         })),
-        totalScore, // Max 400 (60 × 2 + 40 × 2 × 3 = 120 + 240)
+        totalScore: scaledTotalScore, // Scaled to max 400
         isCompleted: updatedSession.isCompleted,
         timeSpent: timeSpent.trim(),
+        questionDetails, // Added to return detailed information about answers
       };
     },
   },

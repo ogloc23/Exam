@@ -8,17 +8,18 @@ datasource db {
 }
 
 model Student {
-  id           Int               @id @default(autoincrement())
-  firstName    String
-  lastName     String
-  userName     String            @unique
-  email        String?           @unique
-  createdAt    DateTime          @default(now())
-  phoneNumber  String?
-  password     String
-  studentType  String?
-  updatedAt    DateTime          @updatedAt
-  examSessions JambExamSession[]
+  id            Int               @id @default(autoincrement())
+  firstName     String
+  lastName      String
+  userName      String            @unique
+  email         String?           @unique
+  createdAt     DateTime          @default(now())
+  phoneNumber   String?
+  password      String
+  studentType   String?
+  updatedAt     DateTime          @updatedAt
+  examSessions  JambExamSession[]
+
 }
 
 model Subject {
@@ -46,15 +47,15 @@ model Score {
 }
 
 model Question {
-  id          String   @id
+  id          String    @id
   question    String
   options     String[]
-  answer      String?  // Made nullable to match fetch.ts
+  answer      String?   // Nullable, matches fetch.ts
   examType    String
   examSubject String
   examYear    String
-  answerUrl   String?  // Added for Myschool answer link
-  imageUrl    String?  // Added for Cloudinary image URL
+  answerUrl   String?   // For Myschool answer link
+  imageUrl    String?   // For Cloudinary image URL
   answers     Answer[]
 
   @@unique([examYear, id])
@@ -71,6 +72,7 @@ model JambExamSession {
   answers     Answer[]
   student     Student   @relation(fields: [studentId], references: [id])
   scores      Score[]
+  isCompetition Boolean  @default(false)
 }
 
 model Answer {
@@ -85,3 +87,4 @@ model Answer {
   @@index([sessionId])
   @@index([questionId])
 }
+

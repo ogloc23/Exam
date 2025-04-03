@@ -1,13 +1,16 @@
+// src/merge.ts
 import { baseTypeDefs } from './schemas/base';
 import { examTypeDefs } from './schemas/exam';
 import { fetchTypeDefs } from './schemas/fetch';
 import { submitTypeDefs } from './schemas/submit';
 import { jambTypeDefs } from './schemas/jamb';
+import { competitionTypeDefs } from './schemas/competition'; // New import
 
 import { examResolvers } from './resolvers/exam';
-import { fetchResolvers } from './resolvers/fetch'; // Changed to ES Module import
+import { fetchResolvers } from './resolvers/fetch';
 import { submitResolvers } from './resolvers/submit';
 import { jambResolvers } from './resolvers/jamb';
+import { competitionResolvers } from './resolvers/competition'; // New import
 
 // Combine schemas
 export const typeDefs = [
@@ -16,6 +19,7 @@ export const typeDefs = [
   fetchTypeDefs,
   submitTypeDefs,
   jambTypeDefs,
+  competitionTypeDefs, // Add competition schema
 ];
 
 // Combine resolvers
@@ -27,12 +31,14 @@ export const resolvers = {
   },
   Query: {
     ...examResolvers.Query,
-    ...fetchResolvers.Query, // Includes fetchJambSubjectQuestions
-    ...jambResolvers.Query,  // Includes years
+    ...fetchResolvers.Query,
+    ...jambResolvers.Query,
+    ...competitionResolvers.Query, // Add competition queries
   },
   Mutation: {
     ...submitResolvers.Mutation,
-    ...jambResolvers.Mutation, // Includes startJambExam, finishJambExam
+    ...jambResolvers.Mutation,
+    ...competitionResolvers.Mutation, // Add competition mutations
   },
-  JambExamSession: jambResolvers.JambExamSession, // Field resolver for remainingTime
+  JambExamSession: jambResolvers.JambExamSession, // Keep existing field resolver
 };

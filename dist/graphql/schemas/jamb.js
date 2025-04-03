@@ -1,7 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.jambTypeDefs = void 0;
-// src/graphql/schemas/jamb.ts
 const graphql_tag_1 = require("graphql-tag");
 exports.jambTypeDefs = (0, graphql_tag_1.gql) `
   type Student {
@@ -36,11 +35,20 @@ exports.jambTypeDefs = (0, graphql_tag_1.gql) `
     isCompleted: Boolean!
     scores: [Score!]!
     remainingTime: String!
+    isCompetition: Boolean
   }
 
   type SubjectScore {
     examSubject: String!
     score: Int!
+    questionCount: Int!
+  }
+
+  type QuestionDetail {
+    questionId: String!
+    correctAnswer: String
+    studentAnswer: String
+    isCorrect: Boolean
   }
 
   type JambExamResult {
@@ -49,6 +57,7 @@ exports.jambTypeDefs = (0, graphql_tag_1.gql) `
     totalScore: Int!
     isCompleted: Boolean!
     timeSpent: String!
+    questionDetails: [QuestionDetail!]!
   }
 
   type Question {
@@ -96,12 +105,15 @@ exports.jambTypeDefs = (0, graphql_tag_1.gql) `
     fetchExternalQuestions(examType: String!, examSubject: String!, examYear: String!): [Question!]!
     fetchStudentQuestions(examType: String!, examSubject: String!, examYear: String!): [Question!]!
     fetchJambSubjectQuestions(sessionId: Int!): [SubjectQuestions!]!
+    fetchJambCompetitionQuestions(sessionId: Int!): [SubjectQuestions!]!
   }
 
   type Mutation {
     registerStudent(input: StudentInput!): Student!
     loginStudent(input: LoginInput!): LoginResponse!
-    startJambExam(subjects: [String!]!, examYear: String!): JambExamSession!
-    finishJambExam(sessionId: Int!, answers: [AnswerInput!]): JambExamResult!
+    startJambExam(subjects: [String!]!, examYear: String, isCompetition: Boolean): JambExamSession!
+    finishJambExam(sessionId: Int!, answers: [AnswerInput!], questionIds: [String!]!): JambExamResult!
   }
+
+  scalar DateTime
 `;
