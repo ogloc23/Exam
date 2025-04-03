@@ -54,25 +54,28 @@ exports.competitionResolvers = {
                 }
                 // Calculate total score for each session and sort
                 const rankedLeaderboard = competitionSessions
-                    .map(session => {
-                    // Calculate total score from all subject scores
-                    const totalScore = session.scores.reduce((sum, score) => sum + score.score, 0);
-                    return {
-                        rank: 0, // Will be assigned after sorting
-                        studentId: session.studentId,
-                        student: session.student,
-                        score: totalScore,
-                        submittedAt: session.endTime || session.startTime, // Use endTime if available
-                        subjectScores: session.scores.map(score => ({
-                            subject: score.examSubject,
-                            score: score.score
-                        }))
-                    };
-                })
-                    .sort((a, b) => b.score - a.score) // Sort by score in descending order
-                    .map((entry, index) => (Object.assign(Object.assign({}, entry), { rank: index + 1 // Assign rank based on sorted position
-                 })));
-                return rankedLeaderboard;
+                    .map(session => ({
+                    studentId: session.studentId,
+                    student: session.student,
+                    score: session.scores.reduce((sum, score) => sum + score.score, 0), // Total score
+                    submittedAt: session.endTime || session.startTime, // Use endTime if available
+                    subjectScores: session.scores.map(score => ({
+                        subject: score.examSubject,
+                        score: score.score
+                    }))
+                }))
+                    .sort((a, b) => b.score - a.score) // Sort by total score descending
+                    .reduce((acc, session) => {
+                    if (!acc.has(session.studentId)) {
+                        acc.set(session.studentId, session); // Store only the highest-scoring session per student
+                    }
+                    return acc;
+                }, new Map())
+                    .values(); // Get the unique highest-scoring sessions
+                // Convert to array and assign ranks
+                const finalLeaderboard = [...rankedLeaderboard].map((entry, index) => (Object.assign(Object.assign({}, entry), { rank: index + 1 })));
+                console.log(finalLeaderboard);
+                return finalLeaderboard;
             }
             catch (error) {
                 console.error('Error fetching competition leaderboard:', error);

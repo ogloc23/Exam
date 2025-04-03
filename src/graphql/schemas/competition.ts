@@ -7,6 +7,7 @@ export const competitionTypeDefs = gql`
     firstName: String!
     lastName: String!
     userName: String!
+    studentType: String!
   }
 
   type SubjectScore {

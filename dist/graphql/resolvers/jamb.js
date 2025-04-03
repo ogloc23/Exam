@@ -475,7 +475,8 @@ exports.jambResolvers = {
                 throw new apollo_server_express_1.ApolloError('Session not found', 'NOT_FOUND');
             if (session.studentId !== studentId)
                 throw new apollo_server_express_1.ApolloError('Unauthorized access to session', 'FORBIDDEN');
-            // if (session.isCompleted) throw new ApolloError('JAMB session already completed', 'INVALID_STATE');
+            if (session.isCompleted)
+                throw new apollo_server_express_1.ApolloError('JAMB session already completed', 'INVALID_STATE');
             const allSubjects = session.subjects.map(normalizeSubject);
             const targetCounts = allSubjects.map(subject => ({
                 subject,
