@@ -556,7 +556,7 @@ export const jambResolvers = {
       });
       if (!session) throw new ApolloError('Session not found', 'NOT_FOUND');
       if (session.studentId !== studentId) throw new ApolloError('Unauthorized access to session', 'FORBIDDEN');
-      // if (session.isCompleted) throw new ApolloError('JAMB session already completed', 'INVALID_STATE');
+      if (session.isCompleted) throw new ApolloError('JAMB session already completed', 'INVALID_STATE');
 
       const allSubjects = session.subjects.map(normalizeSubject);
       const targetCounts = allSubjects.map(subject => ({
@@ -567,7 +567,7 @@ export const jambResolvers = {
       // Fetch questions used in this session (based on what fetchJambSubjectQuestions would return)
       const questionsBySubject = await Promise.all(
         targetCounts.map(async ({ subject, count }) => {
-          let questions = await prisma.question.findMany({
+          let questions = await prisma.question.findMany({ 
             where: { examType: 'jamb', examSubject: subject, examYear: session.examYear },
             take: count,
           }).then(qs => qs.filter(q => {
