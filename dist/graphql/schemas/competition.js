@@ -9,6 +9,7 @@ exports.competitionTypeDefs = (0, graphql_tag_1.gql) `
     firstName: String!
     lastName: String!
     userName: String!
+    studentType: String!
   }
 
   type SubjectScore {
