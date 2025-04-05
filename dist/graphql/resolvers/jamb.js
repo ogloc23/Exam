@@ -355,14 +355,20 @@ exports.jambResolvers = {
                 if (studentType && !['SCIENCE', 'ART'].includes(studentType)) {
                     throw new apollo_server_express_1.ApolloError('Invalid student type', 'VALIDATION_ERROR', { field: 'studentType' });
                 }
+                // Check for existing student with case-insensitive username
                 const existingStudent = yield prisma.student.findFirst({
-                    where: { OR: [{ userName }, ...(email ? [{ email }] : [])] },
+                    where: {
+                        OR: [
+                            { userName: { equals: userName, mode: 'insensitive' } }, // Case-insensitive check
+                            ...(email ? [{ email }] : [])
+                        ]
+                    },
                 });
                 if (existingStudent) {
-                    if (existingStudent.userName === userName && email && existingStudent.email === email) {
+                    if (existingStudent.userName.toLowerCase() === userName.toLowerCase() && email && existingStudent.email === email) {
                         throw new apollo_server_express_1.ApolloError('Username and email already exist', 'DUPLICATE_USER', { fields: ['userName', 'email'] });
                     }
-                    else if (existingStudent.userName === userName) {
+                    else if (existingStudent.userName.toLowerCase() === userName.toLowerCase()) {
                         throw new apollo_server_express_1.ApolloError('Username already exists', 'DUPLICATE_USER', { field: 'userName' });
                     }
                     else if (email && existingStudent.email === email) {
@@ -374,7 +380,7 @@ exports.jambResolvers = {
                     data: {
                         firstName,
                         lastName,
-                        userName,
+                        userName, // Store as provided, case preserved
                         email: email || null,
                         phoneNumber: phoneNumber || null,
                         password: hashedPassword,
@@ -398,8 +404,14 @@ exports.jambResolvers = {
                         missingFields: Object.keys(input).filter(key => !input[key]),
                     });
                 }
+                // Case-insensitive lookup for username
                 const student = yield prisma.student.findFirst({
-                    where: { OR: [{ userName: identifier }, { email: identifier }] },
+                    where: {
+                        OR: [
+                            { userName: { equals: identifier, mode: 'insensitive' } }, // Case-insensitive
+                            { email: identifier }
+                        ]
+                    },
                 });
                 if (!student) {
                     throw new apollo_server_express_1.ApolloError('Invalid credentials', 'AUTHENTICATION_FAILED');

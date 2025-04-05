@@ -210,7 +210,7 @@ export const jambResolvers = {
         })
       );
 
-      console.log(`Total questions selected for session: ${subjectQuestions.reduce((sum, sq) => sum + sq.questions.length, 0)}`);
+      console.log(`Total questions selected for session: ${subjectQuestions.reduce((sum, sq) => sum + sq.questions.length,  0)}`);
       return subjectQuestions;
     },
 
@@ -229,7 +229,6 @@ export const jambResolvers = {
       if (!YEARS.includes(session.examYear as any)) {
         throw new ApolloError(`Invalid exam year: ${session.examYear}. Must be one of: ${YEARS.join(', ')}`, 'VALIDATION_ERROR');
       }
-
 
       const examYear: ExamYear = session.examYear as ExamYear;
 
@@ -414,14 +413,20 @@ export const jambResolvers = {
           throw new ApolloError('Invalid student type', 'VALIDATION_ERROR', { field: 'studentType' });
         }
 
+        // Check for existing student with case-insensitive username
         const existingStudent = await prisma.student.findFirst({
-          where: { OR: [{ userName }, ...(email ? [{ email }] : [])] },
+          where: { 
+            OR: [
+              { userName: { equals: userName, mode: 'insensitive' } }, // Case-insensitive check
+              ...(email ? [{ email }] : [])
+            ]
+          },
         });
 
         if (existingStudent) {
-          if (existingStudent.userName === userName && email && existingStudent.email === email) {
+          if (existingStudent.userName.toLowerCase() === userName.toLowerCase() && email && existingStudent.email === email) {
             throw new ApolloError('Username and email already exist', 'DUPLICATE_USER', { fields: ['userName', 'email'] });
-          } else if (existingStudent.userName === userName) {
+          } else if (existingStudent.userName.toLowerCase() === userName.toLowerCase()) {
             throw new ApolloError('Username already exists', 'DUPLICATE_USER', { field: 'userName' });
           } else if (email && existingStudent.email === email) {
             throw new ApolloError('Email already exists', 'DUPLICATE_USER', { field: 'email' });
@@ -433,7 +438,7 @@ export const jambResolvers = {
           data: {
             firstName,
             lastName,
-            userName,
+            userName, // Store as provided, case preserved
             email: email || null,
             phoneNumber: phoneNumber || null,
             password: hashedPassword,
@@ -463,8 +468,14 @@ export const jambResolvers = {
           });
         }
 
+        // Case-insensitive lookup for username
         const student = await prisma.student.findFirst({
-          where: { OR: [{ userName: identifier }, { email: identifier }] },
+          where: { 
+            OR: [
+              { userName: { equals: identifier, mode: 'insensitive' } }, // Case-insensitive
+              { email: identifier }
+            ]
+          },
         });
 
         if (!student) {
@@ -509,7 +520,6 @@ export const jambResolvers = {
       if (uniqueSubjects.size !== 4) throw new ApolloError('Exactly 4 unique subjects required', 'VALIDATION_ERROR');
       if (!uniqueSubjects.has('english-language')) throw new ApolloError('English Language is compulsory', 'VALIDATION_ERROR');
       if (!isCompetition && !YEARS.includes(examYear as any)) throw new ApolloError(`Invalid year: ${examYear}`, 'VALIDATION_ERROR');
-
 
       const VALID_SUBJECTS: ExamSubject[] = [
         'mathematics', 'english-language', 'fine-arts', 'music', 'french', 'animal-husbandry', 'insurance', 'chemistry',
