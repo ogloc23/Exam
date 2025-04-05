@@ -53,7 +53,7 @@ export const competitionResolvers = {
             score: score.score
           }))
         }));
-        
+         
         // Group sessions by student ID
         const studentMap = new Map();
         
