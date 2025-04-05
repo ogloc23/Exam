@@ -3,15 +3,16 @@
   "version": "1.0.0",
   "scripts": {
     "start": "nodemon src/index.ts",
-    "build": "tsc && npx prisma generate",
+    "build": "tsc",
     "serve": "npm run build && node dist/index.js",
-    "deploy": "npm install && tsc && npx prisma generate && npx prisma db push",
     "questions": "npx ts-node checkQuestions.ts",
     "seed": "npx ts-node src/seed.ts",
     "prisma:init": "prisma init",
     "prisma:migrate": "prisma migrate dev --name init",
+    "prisma:migrate-prod": "prisma migrate deploy",
     "prisma:generate": "prisma generate",
-    "postinstall": "npx prisma generate"
+    "postinstall": "npx prisma generate",
+    "deploy": "npm install && npm run prisma:generate && npm run prisma:migrate-prod"
   },
   "keywords": [],
   "author": "",
